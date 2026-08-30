@@ -1,6 +1,5 @@
 using UdonSharp;
 using UnityEngine;
-using UnityEngine.AI;
 using UnityEngine.UI;
 using VRC.SDKBase;
 using VRC.Udon;
@@ -10,7 +9,7 @@ namespace VNPC
     public enum VNPCMoveStyle { None, PathLoop, PointArea, PlayerFollow }
 
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
-    [RequireComponent(typeof(Animator), typeof(NavMeshAgent), typeof(VRC.SDK3.Components.VRCObjectSync))]
+    [RequireComponent(typeof(Animator), typeof(VRC.SDK3.Components.VRCObjectSync))]
     public class VNPC_Character : UdonSharpBehaviour
     {
         [Header("General")]
@@ -23,26 +22,41 @@ namespace VNPC
         public int startIndex;
         public int step = 1;
         public float moveSpeed = 1.5f;
+        public float turnSpeed = 180f;
         public float waitTime = 3f;
         public float arrivalDistance = 0.15f;
         public Transform areaCenter;
         public float areaRadius = 3f;
         [Range(1, 24)] public int areaDirectionCount = 24;
         public float followDistance = 2f;
-        public float repathInterval = 0.5f;
+        public float followSearchDistance = 10f;
+        [Range(0f, 180f)] public float followSearchAngle = 60f;
 
-        [Header("Animation")]
-        public string speedParameter = "Speed";
-        public string movingParameter = "IsMoving";
-        public string actionParameter = "ActionID";
+        [Header("Player Avoidance")]
+        public float stopDistance = 1.5f;
+
+        [Header("Animations")]
+        public AnimationClip idleAnimation;
+        public AnimationClip walkAnimation;
+        public AnimationClip runAnimation;
+        public float walkSpeedReference = 2f;
+        public float runSpeedReference = 4f;
+        public float idleEnterSpeed = 0.05f;
+        public float idleExitSpeed = 0.1f;
+        public float speedSmoothing = 8f;
+        [HideInInspector] public RuntimeAnimatorController generatedAnimatorController;
+        [HideInInspector] public string importedIdleAsset;
+        [HideInInspector] public string importedIdleClip;
+        [HideInInspector] public string importedWalkAsset;
+        [HideInInspector] public string importedWalkClip;
+        [HideInInspector] public string importedRunAsset;
+        [HideInInspector] public string importedRunClip;
 
         [Header("Player Interaction")]
         public bool lookAtPlayer = true;
         public float lookDistance = 5f;
-        public float playerPollInterval = 0.25f;
         [Range(0f, 1f)] public float lookWeight = 0.65f;
-        [Range(0f, 60f), Tooltip("Maximum horizontal head rotation from the character's forward direction.")]
-        public float maxLookYaw = 60f;
+        [Range(0f, 60f)] public float maxLookYaw = 60f;
 
         [Header("Dialogue UI (local only)")]
         public GameObject dialoguePanel;
@@ -59,56 +73,235 @@ namespace VNPC
         public int[] choiceParameters;
         public GameObject[] commandObjects;
 
-        private NavMeshAgent agent;
+        private const float DistanceTieEpsilon = 0.05f;
+        private const float AngleTieEpsilon = 3f;
+        private const float DialogueRequestTimeout = 3f;
+        private const string SpeedParameter = "Speed";
+        private const string ActionParameter = "ActionID";
+
         private Animator animator;
         private VRCPlayerApi localPlayer;
+        private VRCPlayerApi[] players = new VRCPlayerApi[16];
         private int pointIndex;
         private int areaIndex;
+        private int followPlayerId = -1;
         private int currentMessage = -1;
         private float waitUntil;
-        private float nextPlayerPoll;
-        private float nextRepath;
+        private float nextPlayerScan;
+        private float dialogueRequestStarted;
+        private float smoothedSpeed;
         private bool waiting;
-        private bool playerNear;
+        private bool playerBlocked;
+        private bool hasDestination;
+        private bool dialogueRequestPending;
+        private bool dialogueActive;
+        private bool communicationWasLocked;
         private Vector3 areaOrigin;
+        private Vector3 destination;
         private Vector3 previousPosition;
 
         private void Start()
         {
-            agent = GetComponent<NavMeshAgent>();
             animator = GetComponent<Animator>();
             localPlayer = Networking.LocalPlayer;
             pointIndex = startIndex;
             areaOrigin = areaCenter != null ? areaCenter.position : transform.position;
             previousPosition = transform.position;
-            ConfigureAgent();
+            communicationWasLocked = manager != null && manager.IsCharacterCommunicating(characterId);
             if (dialoguePanel != null) dialoguePanel.SetActive(false);
-            if (IsController()) SetNextDestination(false);
+            if (IsController()) RecalculateDestination(false);
+            ScheduleNextPlayerScan();
         }
 
         private void Update()
         {
-            UpdateAnimator();
-            if (Time.time >= nextPlayerPoll)
+            UpdateMeasuredSpeed();
+            UpdateDialogueState();
+            if (Time.time >= nextPlayerScan)
             {
-                nextPlayerPoll = Time.time + Mathf.Max(0.1f, playerPollInterval);
-                playerNear = localPlayer != null && Vector3.Distance(transform.position, localPlayer.GetPosition()) <= lookDistance;
+                ScanPlayers();
+                ScheduleNextPlayerScan();
             }
-            if (!IsController() || agent == null || !agent.enabled) return;
-            UpdateMovement();
+            if (IsController()) UpdateMovement();
+        }
+
+        private void ScheduleNextPlayerScan()
+        {
+            int playerCount = VRCPlayerApi.GetPlayerCount();
+            int npcCount = manager == null ? 1 : manager.GetCharacterCount();
+            float interval = npcCount + playerCount > 20 ? 0.25f : 0.1f;
+            float offset = Mathf.Abs(characterId % 10) * interval * 0.1f;
+            nextPlayerScan = Time.time + interval + offset;
+        }
+
+        private void EnsurePlayerCapacity(int count)
+        {
+            if (players != null && players.Length >= count) return;
+            int size = players == null || players.Length == 0 ? 16 : players.Length;
+            while (size < count) size *= 2;
+            players = new VRCPlayerApi[size];
+        }
+
+        private void ScanPlayers()
+        {
+            int count = VRCPlayerApi.GetPlayerCount();
+            EnsurePlayerCapacity(count);
+            VRCPlayerApi.GetPlayers(players);
+            playerBlocked = false;
+            float stopDistanceSquared = stopDistance * stopDistance;
+            for (int i = 0; i < count; i++)
+            {
+                VRCPlayerApi player = players[i];
+                if (!Utilities.IsValid(player)) continue;
+                if ((player.GetPosition() - transform.position).sqrMagnitude <= stopDistanceSquared)
+                {
+                    playerBlocked = true;
+                    break;
+                }
+            }
+            if (moveStyle == VNPCMoveStyle.PlayerFollow && IsController()) SelectFollowPlayer(count);
+        }
+
+        private void SelectFollowPlayer(int count)
+        {
+            int bestId = -1;
+            float bestDistance = float.MaxValue;
+            float bestAngle = float.MaxValue;
+            bool tied = false;
+            for (int i = 0; i < count; i++)
+            {
+                VRCPlayerApi player = players[i];
+                if (!Utilities.IsValid(player)) continue;
+                Vector3 offset = player.GetPosition() - transform.position;
+                float distance = offset.magnitude;
+                if (distance > followSearchDistance || distance <= 0.001f) continue;
+                float angle = Vector3.Angle(transform.forward, offset);
+                if (angle > followSearchAngle) continue;
+                if (distance < bestDistance - DistanceTieEpsilon)
+                {
+                    bestId = player.playerId;
+                    bestDistance = distance;
+                    bestAngle = angle;
+                    tied = false;
+                }
+                else if (Mathf.Abs(distance - bestDistance) <= DistanceTieEpsilon)
+                {
+                    if (angle < bestAngle - AngleTieEpsilon)
+                    {
+                        bestId = player.playerId;
+                        bestAngle = angle;
+                        tied = false;
+                    }
+                    else if (Mathf.Abs(angle - bestAngle) <= AngleTieEpsilon) tied = true;
+                }
+            }
+            followPlayerId = tied ? -1 : bestId;
+            if (followPlayerId >= 0)
+            {
+                VRCPlayerApi target = VRCPlayerApi.GetPlayerById(followPlayerId);
+                if (Utilities.IsValid(target)) { destination = target.GetPosition(); hasDestination = true; }
+            }
+            else hasDestination = false;
+        }
+
+        private void UpdateMovement()
+        {
+            bool communicationLocked = manager != null && manager.IsCharacterCommunicating(characterId);
+            if (moveStyle == VNPCMoveStyle.None || communicationLocked || playerBlocked) return;
+            if (waiting)
+            {
+                if (Time.time < waitUntil) return;
+                waiting = false;
+                RecalculateDestination(true);
+            }
+            if (moveStyle == VNPCMoveStyle.PlayerFollow)
+            {
+                if (followPlayerId < 0) return;
+                VRCPlayerApi target = VRCPlayerApi.GetPlayerById(followPlayerId);
+                if (!Utilities.IsValid(target)) { followPlayerId = -1; hasDestination = false; return; }
+                destination = target.GetPosition();
+                hasDestination = true;
+                if (Vector3.Distance(transform.position, destination) <= followDistance) return;
+            }
+            if (!hasDestination) { RecalculateDestination(false); if (!hasDestination) return; }
+            MoveTowardsDestination();
+        }
+
+        private void MoveTowardsDestination()
+        {
+            Vector3 offset = destination - transform.position;
+            Vector3 flat = new Vector3(offset.x, 0f, offset.z);
+            if (flat.sqrMagnitude > 0.0001f)
+            {
+                Quaternion targetRotation = Quaternion.LookRotation(flat, transform.up);
+                transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, Mathf.Max(0f, turnSpeed) * Time.deltaTime);
+            }
+            transform.position = Vector3.MoveTowards(transform.position, destination, Mathf.Max(0f, moveSpeed) * Time.deltaTime);
+            if (Vector3.Distance(transform.position, destination) > arrivalDistance) return;
+            transform.position = destination;
+            if (moveStyle == VNPCMoveStyle.PlayerFollow) return;
+            hasDestination = false;
+            waiting = true;
+            waitUntil = Time.time + Mathf.Max(0f, waitTime);
+        }
+
+        private void RecalculateDestination(bool advance)
+        {
+            if (moveStyle == VNPCMoveStyle.PathLoop)
+            {
+                int count = manager == null ? 0 : manager.GetPathPointCount(pathId);
+                if (count == 0) { hasDestination = false; return; }
+                if (advance) pointIndex += step == 0 ? 1 : step;
+                destination = manager.GetPathPoint(pathId, pointIndex);
+                hasDestination = true;
+            }
+            else if (moveStyle == VNPCMoveStyle.PointArea)
+            {
+                int directions = Mathf.Max(1, areaDirectionCount);
+                if (advance) areaIndex = (areaIndex + (step == 0 ? 1 : step) + directions) % directions;
+                float angle = areaIndex * 360f / directions * Mathf.Deg2Rad;
+                Vector3 center = areaCenter != null ? areaCenter.position : areaOrigin;
+                destination = center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * areaRadius;
+                hasDestination = true;
+            }
+            else hasDestination = false;
+        }
+
+        private void RecalculateAfterCommunication()
+        {
+            waiting = false;
+            waitUntil = 0f;
+            if (moveStyle == VNPCMoveStyle.PlayerFollow)
+            {
+                followPlayerId = -1;
+                hasDestination = false;
+                ScanPlayers();
+            }
+            else RecalculateDestination(moveStyle == VNPCMoveStyle.PointArea);
+        }
+
+        private void UpdateMeasuredSpeed()
+        {
+            float delta = Mathf.Max(Time.deltaTime, 0.0001f);
+            float measured = Vector3.Distance(transform.position, previousPosition) / delta;
+            previousPosition = transform.position;
+            if (measured > Mathf.Max(20f, moveSpeed * 8f)) measured = smoothedSpeed;
+            smoothedSpeed = Mathf.Lerp(smoothedSpeed, measured, Mathf.Clamp01(speedSmoothing * delta));
+            if (animator != null) animator.SetFloat(SpeedParameter, smoothedSpeed);
         }
 
         private void LateUpdate()
         {
-            if (!lookAtPlayer || !playerNear || animator == null || localPlayer == null) return;
+            if (!lookAtPlayer || animator == null || localPlayer == null) return;
+            if (Vector3.Distance(transform.position, localPlayer.GetPosition()) > lookDistance) return;
             Transform head = animator.GetBoneTransform(HumanBodyBones.Head);
             if (head == null) return;
             Vector3 target = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position;
             Vector3 localDirection = transform.InverseTransformDirection(target - head.position);
-            float yaw = Mathf.Atan2(localDirection.x, localDirection.z) * Mathf.Rad2Deg;
-            yaw = Mathf.Clamp(yaw, -maxLookYaw, maxLookYaw);
-            float horizontalDistance = new Vector2(localDirection.x, localDirection.z).magnitude;
-            float pitch = -Mathf.Atan2(localDirection.y, horizontalDistance) * Mathf.Rad2Deg;
+            float yawLimit = Mathf.Clamp(maxLookYaw, 0f, 60f);
+            float yaw = Mathf.Clamp(Mathf.Atan2(localDirection.x, localDirection.z) * Mathf.Rad2Deg, -yawLimit, yawLimit);
+            float horizontal = new Vector2(localDirection.x, localDirection.z).magnitude;
+            float pitch = -Mathf.Atan2(localDirection.y, horizontal) * Mathf.Rad2Deg;
             Quaternion desired = transform.rotation * Quaternion.Euler(pitch, yaw, 0f);
             head.rotation = Quaternion.Slerp(head.rotation, desired, lookWeight);
         }
@@ -118,89 +311,47 @@ namespace VNPC
             return Networking.LocalPlayer == null || Networking.IsOwner(gameObject);
         }
 
-        private void ConfigureAgent()
-        {
-            if (agent == null) return;
-            agent.enabled = IsController();
-            if (!agent.enabled) return;
-            agent.speed = moveSpeed;
-            agent.stoppingDistance = moveStyle == VNPCMoveStyle.PlayerFollow ? followDistance : arrivalDistance;
-        }
-
-        private void UpdateMovement()
-        {
-            if (moveStyle == VNPCMoveStyle.None) { agent.isStopped = true; return; }
-            if (moveStyle == VNPCMoveStyle.PlayerFollow)
-            {
-                if (localPlayer != null && Time.time >= nextRepath)
-                {
-                    nextRepath = Time.time + Mathf.Max(0.1f, repathInterval);
-                    agent.stoppingDistance = followDistance;
-                    agent.SetDestination(localPlayer.GetPosition());
-                }
-                return;
-            }
-            if (waiting)
-            {
-                if (Time.time >= waitUntil) { waiting = false; SetNextDestination(true); }
-                return;
-            }
-            if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + arrivalDistance)
-            {
-                waiting = true;
-                waitUntil = Time.time + Mathf.Max(0f, waitTime);
-                agent.isStopped = true;
-            }
-        }
-
-        private void SetNextDestination(bool advance)
-        {
-            if (agent == null || !agent.isOnNavMesh) return;
-            Vector3 destination;
-            if (moveStyle == VNPCMoveStyle.PathLoop)
-            {
-                if (manager == null || manager.GetPathPointCount(pathId) == 0) return;
-                if (advance) pointIndex += step == 0 ? 1 : step;
-                destination = manager.GetPathPoint(pathId, pointIndex);
-            }
-            else if (moveStyle == VNPCMoveStyle.PointArea)
-            {
-                if (advance) areaIndex = (areaIndex + (step == 0 ? 1 : step) + areaDirectionCount) % areaDirectionCount;
-                float angle = areaIndex * 360f / Mathf.Max(1, areaDirectionCount) * Mathf.Deg2Rad;
-                Vector3 center = areaCenter != null ? areaCenter.position : areaOrigin;
-                destination = center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * areaRadius;
-                NavMeshHit hit;
-                if (NavMesh.SamplePosition(destination, out hit, Mathf.Max(1f, areaRadius * 0.5f), NavMesh.AllAreas)) destination = hit.position;
-            }
-            else return;
-            agent.isStopped = false;
-            agent.stoppingDistance = arrivalDistance;
-            agent.SetDestination(destination);
-        }
-
-        private void UpdateAnimator()
-        {
-            if (animator == null) return;
-            float delta = Mathf.Max(Time.deltaTime, 0.0001f);
-            float speed = IsController() && agent != null && agent.enabled
-                ? agent.velocity.magnitude
-                : Vector3.Distance(transform.position, previousPosition) / delta;
-            previousPosition = transform.position;
-            if (!string.IsNullOrEmpty(speedParameter)) animator.SetFloat(speedParameter, speed);
-            if (!string.IsNullOrEmpty(movingParameter)) animator.SetBool(movingParameter, speed > 0.05f);
-        }
-
         public override void Interact() { StartDialogue(); }
 
         public void StartDialogue()
         {
-            if (messages == null || messages.Length == 0) return;
-            ShowMessage(0);
+            if (dialogueActive || dialogueRequestPending || manager == null || localPlayer == null || messages == null || messages.Length == 0) return;
+            if (Vector3.Distance(transform.position, localPlayer.GetPosition()) > stopDistance) return;
+            dialogueRequestPending = true;
+            dialogueRequestStarted = Time.time;
+            manager.RequestCommunication(characterId);
+        }
+
+        private void UpdateDialogueState()
+        {
+            if (manager == null || localPlayer == null) return;
+            int speaker = manager.GetCommunicatingPlayerId(characterId);
+            if (dialogueRequestPending)
+            {
+                if (speaker == localPlayer.playerId)
+                {
+                    dialogueRequestPending = false;
+                    dialogueActive = true;
+                    ShowMessage(0);
+                }
+                else if (speaker >= 0 || Time.time - dialogueRequestStarted > DialogueRequestTimeout)
+                    dialogueRequestPending = false;
+            }
+            if (dialogueActive && speaker != localPlayer.playerId) CloseDialogueLocal();
+            if (dialogueActive && Vector3.Distance(transform.position, localPlayer.GetPosition()) > stopDistance) CloseDialogue();
         }
 
         public void CloseDialogue()
         {
+            if (dialogueActive && manager != null) manager.RequestCommunicationEnd(characterId);
+            CloseDialogueLocal();
+        }
+
+        private void CloseDialogueLocal()
+        {
             currentMessage = -1;
+            dialogueActive = false;
+            dialogueRequestPending = false;
             if (dialoguePanel != null) dialoguePanel.SetActive(false);
         }
 
@@ -231,7 +382,7 @@ namespace VNPC
 
         private void SelectChoice(int localIndex)
         {
-            if (currentMessage < 0) return;
+            if (!dialogueActive || currentMessage < 0) return;
             int start = messageChoiceStarts != null && currentMessage < messageChoiceStarts.Length ? messageChoiceStarts[currentMessage] : 0;
             int choice = start + localIndex;
             if (choiceTexts == null || choice < 0 || choice >= choiceTexts.Length) return;
@@ -250,19 +401,32 @@ namespace VNPC
                 else if (command == 2) manager.ClearGlobalFlag(parameter);
                 else if (command == 3) manager.ToggleGlobalFlag(parameter);
             }
-            if (command == 4 && animator != null && !string.IsNullOrEmpty(actionParameter)) animator.SetInteger(actionParameter, parameter);
+            if (command == 4 && animator != null) animator.SetInteger(ActionParameter, parameter);
             if ((command == 5 || command == 6) && commandObjects != null && parameter >= 0 && parameter < commandObjects.Length && commandObjects[parameter] != null)
                 commandObjects[parameter].SetActive(command == 5);
             if (command == 7 && parameter >= 0 && parameter <= (int)VNPCMoveStyle.PlayerFollow)
+            {
                 moveStyle = (VNPCMoveStyle)parameter;
+                RecalculateDestination(false);
+            }
+        }
+
+        public void OnManagerStateChanged()
+        {
+            if (manager == null) return;
+            bool locked = manager.IsCharacterCommunicating(characterId);
+            if (communicationWasLocked && !locked && IsController()) RecalculateAfterCommunication();
+            communicationWasLocked = locked;
+            if (localPlayer != null && dialogueActive && manager.GetCommunicatingPlayerId(characterId) != localPlayer.playerId) CloseDialogueLocal();
         }
 
         public void OnGlobalFlagsChanged() { }
 
         public override void OnOwnershipTransferred(VRCPlayerApi player)
         {
-            ConfigureAgent();
-            if (IsController()) SetNextDestination(false);
+            previousPosition = transform.position;
+            smoothedSpeed = 0f;
+            if (IsController()) RecalculateDestination(false);
         }
     }
 }
