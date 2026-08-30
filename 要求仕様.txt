@@ -1,3 +1,566 @@
+
+
+VNPC-VRChat-NPC-Framework の仕様変更を実装してください。
+
+対象：
+- Runtime/VNPC_Character.cs
+- 必要に応じて Runtime/VNPC_Manager.cs
+- Editor/VNPC_CharacterEditor.cs
+- 必要に応じてEditor用補助クラスを新規追加
+
+前提：
+- VRChat Worlds SDK / UdonSharp向け
+- RuntimeコードはUdonSharpで動作可能な範囲に限定する
+- Editor側コードは通常のUnity Editor C#で実装してよい
+- VRCObjectSyncによるTransform同期は維持する
+- Runtimeで外部ファイルを読み書きしない
+- 既存機能を可能な限り維持する
+
+==================================================
+1. 移動方式の変更
+==================================================
+
+NavMeshAgentを通常移動の必須コンポーネントから外す。
+
+PathLoop / PointArea は VNPC_Character 自身がTransformを直接移動させる。
+
+基本方式：
+
+targetPosition取得
+↓
+moveSpeed * Time.deltaTime
+↓
+Vector3.MoveTowards等でTransform.positionを更新
+↓
+進行方向へTransform.rotationを回転
+↓
+VRCObjectSyncで他クライアントへ同期
+
+Root Motionは使用しない。
+
+通常NPCの必須構成を以下とする。
+
+- Animator
+- VRCObjectSync
+- VNPC_Character
+
+NavMeshAgentは基本的に使用しない。
+
+静的オブジェクト、壁、家具等の障害物回避は実装しない。
+PathはWorld制作者が安全な位置へ配置する前提とする。
+
+既存PathLoop：
+- VNPC_Managerに登録されたWaypointを順番に移動
+- startIndex / step / waitTime 等の既存仕様は可能な限り維持する
+
+既存PointArea：
+- 指定領域内の候補地点へ順次移動
+- 移動自体はDirect Movementとする
+
+PlayerFollowについては既存仕様との整合を確認し、
+Direct Movementで問題なく実装可能ならDirect化する。
+ただし壁回避等は行わない。
+
+==================================================
+2. プレイヤー衝突回避
+==================================================
+
+衝突回避対象を「プレイヤーのみ」に限定する。
+
+以下は回避対象外：
+- Static Object
+- Wall
+- Furniture
+- 他のVNPC
+
+NPC同士のAvoidanceも今回は実装しない。
+
+プレイヤー検知にはTrigger Colliderを利用する方式を基本とする。
+
+目的はプレイヤーを横方向に避けることではなく、
+「進行方向上にプレイヤーがいて衝突する可能性がある場合に停止する」
+ことである。
+
+概念：
+
+通常移動
+↓
+TriggerでPlayer検出
+↓
+PlayerがNPCの進行方向上にいるか確認
+↓
+衝突コースなら移動停止
+↓
+Playerが衝突コースから外れる
+↓
+移動再開
+
+Player Avoidance設定例：
+
+- enablePlayerAvoidance : bool
+- detectionDistance : float
+- stopDistance : float
+- detectionAngle : float
+
+必要ならTrigger ColliderをEditor側のAuto Setupで自動生成する。
+
+ColliderはIs Trigger = trueとする。
+PlayerをPhysicsで押すSolid Colliderとしては使用しない。
+
+Runtime構造：
+
+VNPC_Character
+│
+├ Movement
+│  ├ PathLoop
+│  ├ PointArea
+│  └ PlayerFollow
+│       ↓
+│  Direct Movement
+│  moveSpeed * deltaTime
+│
+├ Player Avoidance
+│  ├ Trigger Detection
+│  ├ Collision Course Check
+│  └ Stop / Resume
+│
+├ Animator
+│  └ 実移動速度からAnimation状態を決定
+│
+└ VRCObjectSync
+   └ Transform同期
+
+==================================================
+3. AnimationClipをVNPC_Character側で設定
+==================================================
+
+現在の以下のようなAnimator Parameter名中心の設定を、
+通常利用者向けの主設定から外す。
+
+- Speed Parameter
+- Moving Parameter
+- Action Parameter
+
+代わりにVNPC_CharacterからAnimationClipを直接設定可能にする。
+
+最低限以下を追加：
+
+- Idle Animation : AnimationClip
+- Walk Animation : AnimationClip
+- Run Animation : AnimationClip
+
+用途：
+
+Idle
+- 停止中
+- waitTimeによる待機中
+- Player Avoidanceによる停止中
+
+Walk
+- 通常移動中
+
+Run
+- 実移動速度が設定閾値以上の場合
+- Run Animationが未設定ならWalkを継続してよい
+
+必要なら以下も追加：
+
+- runSpeedThreshold : float
+
+AnimationはIn Place前提とし、
+Transform移動はVNPC_Character側で行う。
+
+==================================================
+4. Animator Controller自動生成
+==================================================
+
+VNPC_Characterに設定されたAnimationClipから
+専用Animator ControllerをEditor側で自動生成する。
+
+Runtime UdonからAnimatorControllerを生成してはいけない。
+
+Editor用クラス例：
+
+Editor/VNPC_AnimatorBuilder.cs
+
+生成内容の最低要件：
+
+Base Layer
+- Idle State
+- Walk State
+- Run State（Run Animationが存在する場合）
+
+VNPC_Characterの実移動速度に応じて状態を切り替えられる構成にする。
+
+実装方法は以下のいずれでもよい：
+
+A.
+Speed Float Parameterを使用したBlendTree
+
+または
+
+B.
+IsMoving / IsRunning等のParameterによるState Transition
+
+利用者がAnimator Controller内部を手動設定しなくても動作することを優先する。
+
+VNPC_Character側のAnimationClip変更後、
+InspectorからAnimator再生成できるようにする。
+
+例：
+
+[Generate / Rebuild Animator]
+
+既存Animator Controllerを上書きする場合は、
+誤ってユーザー作成Controllerを破壊しないようにする。
+
+可能ならVNPC専用ControllerをAssets内へ生成し、
+Animator.runtimeAnimatorControllerへ割り当てる。
+
+==================================================
+5. 実移動速度によるAnimation制御
+==================================================
+
+Animation状態はNavMeshAgent.velocityではなく、
+Transformの実移動量から算出する。
+
+例：
+
+currentSpeed =
+Vector3.Distance(transform.position, previousPosition)
+/
+Time.deltaTime
+
+これによりOwner / Remote双方で、
+実際にNPCが動いているかを基準にAnimationを決定する。
+
+停止：
+Idle
+
+通常移動：
+Walk
+
+runSpeedThreshold以上：
+Run
+
+VRCObjectSyncで同期されたRemote NPCについても、
+Transform差分からAnimationが再生されるようにする。
+
+==================================================
+6. VNPC_Character設定Preset / Export / Import
+==================================================
+
+VNPC_Characterの可搬可能な設定を
+Project間で保存・読み込みできる機能をEditor側に追加する。
+
+想定用途：
+
+開発用Unity Project
+↓
+VNPC_C設定を書き出し
+↓
+.vnpcファイル
+↓
+本番World Project
+↓
+VNPC_Cへ読み込み
+
+専用拡張子：
+
+*.vnpc
+
+中身はJSON形式でよい。
+
+Runtimeでは.vnpcを読み込まない。
+Editor Import時にVNPC_Characterへ値をコピーする。
+
+最低限以下を保存対象とする：
+
+- MoveStyle
+- MoveSpeed
+- WaitTime
+- ArrivalDistance
+- FollowDistance等の移動設定
+- LookDistance
+- LookWeight
+- Player Avoidance設定
+- 会話内容
+- 選択肢
+- Command情報
+- リアクション設定
+- Animation設定に関する参考情報
+
+以下のScene依存参照は保存しない：
+
+- VNPC_Manager参照
+- AreaCenterのTransform参照
+- Scene内GameObject
+- DialoguePanel
+- Button
+- Text
+- CommandObject
+- その他Scene Object参照
+
+Path IDについてもWorld間で意味が変わるため、
+原則としてPortable Preset対象外とする。
+
+==================================================
+7. AnimationClipのPreset保存仕様
+==================================================
+
+AnimationClipそのもののUnity Object参照、
+GUID、AssetPathによる完全復元は行わない。
+
+開発ProjectではダミーAnimation、
+本番Projectでは本番用Animationを割り当てる運用を前提とする。
+
+.vnpcへ保存するのは参考情報のみ。
+
+各Animationについて以下を保存：
+
+- Role
+- Source Asset File Name
+- Source Clip Name
+
+例：
+
+Idle
+- Source Asset : Dummy_Idle.anim
+- Source Clip : Dummy_Idle
+
+Walk
+- Source Asset : Dummy_Walk.anim
+- Source Clip : Dummy_Walk
+
+Run
+- Source Asset : Dummy_Run.fbx
+- Source Clip : Run
+
+Import先ではAnimationClipを自動割当しなくてもよい。
+
+AnimationClipが未設定の場合、
+InspectorへImported Referenceとして参考情報を表示する。
+
+例：
+
+Idle Animation
+[ None (AnimationClip) ]
+
+Imported Reference:
+Dummy_Idle.anim / Dummy_Idle
+
+本番AnimationClipをユーザーが手動割当できること。
+
+FBX内AnimationClipにも対応できるよう、
+ファイル名だけでなくClip名も保持する。
+
+==================================================
+8. .vnpcファイルのVersion管理
+==================================================
+
+最初からVersion情報を含める。
+
+最低限：
+
+- format
+- formatVersion
+- frameworkVersion
+
+例：
+
+{
+  "format": "VNPCCharacter",
+  "formatVersion": 1,
+  "frameworkVersion": "0.1.0"
+}
+
+未知の新しいformatVersionを読み込む場合は警告または読込拒否する。
+
+古いformatVersionについては、
+将来的にMigration処理を追加可能な構造にしておく。
+
+==================================================
+9. Inspector UI
+==================================================
+
+VNPC_CharacterEditorを整理する。
+
+想定構造：
+
+General
+
+Movement
+- Move Style
+- Move Speed
+- Wait Time
+- その他移動設定
+
+Animations
+- Idle Animation
+- Walk Animation
+- Run Animation
+- Run Speed Threshold
+- Generate / Rebuild Animator
+
+Player Interaction
+- Look At Player
+- Look Distance
+- Look Weight
+
+Player Avoidance
+- Enable
+- Detection Distance
+- Stop Distance
+- Detection Angle
+
+Dialogue
+- 既存設定
+
+Portable Settings
+- Export .vnpc
+- Import .vnpc
+
+Advanced
+- Animator内部Parameter等
+- デバッグ設定
+
+通常利用者がAnimator Parameter名を手入力する必要がないUIにする。
+
+==================================================
+10. Auto Setup
+==================================================
+
+VNPC_CharacterのAuto Setup時：
+
+必須：
+- Animator
+- VRCObjectSync
+
+Player Avoidance有効時：
+- 検知用Trigger Collider
+
+を設定する。
+
+NavMeshAgentを必須追加しない。
+
+複数VNPC_ManagerがSceneに存在する場合、
+勝手に新規Managerを作成しない。
+
+Manager数：
+
+0
+→ 新規作成可能
+
+1
+→ 自動割当
+
+2以上
+→ 警告してユーザー選択を要求
+
+==================================================
+11. UdonSharp制約
+==================================================
+
+Runtime内のコードはUdonSharpとしてコンパイル可能であること。
+
+特に以下を避ける：
+
+- RuntimeでUnityEditor APIを使用
+- RuntimeでAssetDatabase使用
+- RuntimeでファイルI/O
+- RuntimeでAnimatorController生成
+- UdonSharpで非対応なC# API
+
+Editor専用機能：
+
+- Animator生成
+- .vnpc Export
+- .vnpc Import
+- AnimationClipのAsset名取得
+- Inspector拡張
+- Trigger自動設定
+
+は全てEditorフォルダ側に置く。
+
+==================================================
+12. 実装後に確認すること
+==================================================
+
+最低限以下を確認すること。
+
+1.
+UdonSharp compile errorがないこと
+
+2.
+PathLoopでWaypoint間をDirect Movementできること
+
+3.
+PointAreaでDirect Movementできること
+
+4.
+停止中にIdle Animation
+
+5.
+移動中にWalk Animation
+
+6.
+高速移動時にRun Animation
+
+7.
+Playerが進路へ入った場合NPCが停止すること
+
+8.
+Playerが離れたら移動再開すること
+
+9.
+VRCObjectSyncでRemote側も位置同期されること
+
+10.
+Remote側でもTransform移動量からAnimationが切り替わること
+
+11.
+.vnpc Exportが可能なこと
+
+12.
+別VNPC_Characterへ.vnpc Importできること
+
+13.
+Scene依存参照をImportで破壊しないこと
+
+14.
+AnimationClipが存在しなくてもImport可能なこと
+
+15.
+未割当Animationの元ファイル名・Clip名をInspectorで確認できること
+
+==================================================
+設計方針
+==================================================
+
+今回のVNPCは高度なAI Navigationを目的としない。
+
+「World制作者が指定した安全な動線上を、
+軽量なNPCが移動して生活感を演出する」
+ことを優先する。
+
+そのため、
+
+- Static obstacle navigationは捨てる
+- NavMeshへの依存を減らす
+- Direct Movementを基本とする
+- Playerとの衝突だけ停止処理で回避する
+- Animationは見た目だけ担当
+- Transform移動はVNPC_Characterが担当
+- Runtimeを単純化する
+- Project間でNPCの振る舞い設定を持ち運べるようにする
+
+という方針で実装する。
+
+既存コードを確認したうえで、
+不要になったNavMeshAgent関連コードを整理し、
+既存Dialogue / GlobalFlag / VRCObjectSync等の機能は
+可能な限り破壊せずに変更すること。
+-------------------------------------v0.0.1
 ■やりたいこと
 VRChatワールド作成でNPCを実装したいんだけど、既出で似たような実装が出来るツールもしくは製品はある？
 

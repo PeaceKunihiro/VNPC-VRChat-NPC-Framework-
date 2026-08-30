@@ -41,6 +41,8 @@ namespace VNPC
         public float lookDistance = 5f;
         public float playerPollInterval = 0.25f;
         [Range(0f, 1f)] public float lookWeight = 0.65f;
+        [Range(0f, 60f), Tooltip("Maximum horizontal head rotation from the character's forward direction.")]
+        public float maxLookYaw = 60f;
 
         [Header("Dialogue UI (local only)")]
         public GameObject dialoguePanel;
@@ -102,7 +104,12 @@ namespace VNPC
             Transform head = animator.GetBoneTransform(HumanBodyBones.Head);
             if (head == null) return;
             Vector3 target = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position;
-            Quaternion desired = Quaternion.LookRotation(target - head.position, transform.up);
+            Vector3 localDirection = transform.InverseTransformDirection(target - head.position);
+            float yaw = Mathf.Atan2(localDirection.x, localDirection.z) * Mathf.Rad2Deg;
+            yaw = Mathf.Clamp(yaw, -maxLookYaw, maxLookYaw);
+            float horizontalDistance = new Vector2(localDirection.x, localDirection.z).magnitude;
+            float pitch = -Mathf.Atan2(localDirection.y, horizontalDistance) * Mathf.Rad2Deg;
+            Quaternion desired = transform.rotation * Quaternion.Euler(pitch, yaw, 0f);
             head.rotation = Quaternion.Slerp(head.rotation, desired, lookWeight);
         }
 
