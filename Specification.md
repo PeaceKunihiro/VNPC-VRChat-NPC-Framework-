@@ -818,3 +818,358 @@ PathはManager内の共有設定データ、またはTransform参照として保
 - 選択肢Dialogue
 - GlobalFlag連携
 - 複数NPCの一元管理
+
+---
+
+# v0.1.1仕様
+
+本章はv0.1.1で確定した変更仕様を定義する。本章と以前の章で内容が競合する場合は、本章を優先する。
+
+## 1. Runtime基本構成
+
+通常NPCの必須コンポーネントは以下とする。
+
+```text
+NPC
+├ Animator
+├ VRCObjectSync
+└ VNPC_Character
+```
+
+- `NavMeshAgent` は通常移動の必須コンポーネントとしない。
+- Root Motionは使用しない。
+- Transformの移動は `VNPC_Character` が行う。
+- Transform同期は常時有効な `VRCObjectSync` に任せる。
+- `VNPC_Character` 自身はSynced Variableを持たない。
+- 移動先決定とTransform操作はCharacterのOwnerのみが実行する。
+- Remote側は移動AIを再実行せず、受信したTransformから表示用Animation Stateを再現する。
+- Static Object、Wall、Furniture、他VNPCの障害物回避は行わない。
+- World制作者が安全なWaypointと移動領域を配置する前提とする。
+
+## 2. Direct Movement
+
+`PathLoop`、`PointArea`、`PlayerFollow` はDirect Movementで実装する。
+
+```text
+targetPosition取得
+↓
+moveSpeed * Time.deltaTime
+↓
+Vector3.MoveTowardsでTransform.positionを更新
+↓
+進行方向へTransform.rotationを更新
+↓
+VRCObjectSyncでRemoteへ同期
+```
+
+### 2.1 PathLoop
+
+- Managerに登録されたWaypointを `startIndex`、`step`、進行方向に従って移動する。
+- 到着後は `waitTime` 待機し、次のWaypointへ移動する。
+- 会話等による停止中も現在Point Indexと現在目的Waypointを保持する。
+
+### 2.2 PointArea
+
+- `areaCenter` と半径内に配置された決定論的な候補地点を順次使用する。
+- Runtimeで無制限なランダム再抽選を行わない。
+- 移動は候補地点への直線移動とする。
+
+### 2.3 PlayerFollow
+
+- Character座標を基点として、前方左右 `followSearchAngle` 度以内かつ `followSearchDistance` m以内のプレイヤーを候補とする。
+- 候補のうち相対距離が最も近いプレイヤーを優先する。
+- 距離が同等の場合は、Character正面に対する角度が最も小さいプレイヤーを優先する。
+- 距離差0.05m以内かつ角度差3度以内の候補は同順位とする。
+- 最上位候補が複数存在する場合、または候補が存在しない場合は追従しない。
+- 追従対象はOwner側で選択し、Remote側では選択処理を行わない。
+- 会話終了後は追従対象を再探索する。
+
+### 2.4 回転
+
+- 回転は瞬時に切り替えず、角速度に基づいて進行方向へ向ける。
+- `turnSpeed` の初期値は180度/秒とする。
+- Inspectorから調整可能とする。
+
+## 3. プレイヤー近接停止
+
+Trigger Colliderは使用せず、Character中心の仮想球範囲でプレイヤーを検知する。
+
+- 公開する主設定は `stopDistance : float` とする。
+- Characterからプレイヤーまでの距離が `stopDistance` 以下の場合は移動を停止する。
+- 範囲内にプレイヤーが存在しなくなった場合は移動を再開する。
+- 進行方向、壁、家具、他NPCは判定しない。
+- PlayerFollow対象本人も停止判定から除外しない。
+- `stopDistance` が `followDistance` より大きい場合、Follow Distanceへ到達できないことをInspectorで警告する。
+- 判定はOwner側のみ実行する。
+- 全プレイヤー取得用配列は再利用し、毎回の割り当てを避ける。
+
+### 3.1 探索更新頻度
+
+```text
+NPC数 + Player数 <= 20
+→ 最大10回/秒（0.1秒間隔）
+
+NPC数 + Player数 > 20
+→ 最大4回/秒（0.25秒間隔）
+```
+
+- Character ID等を利用してNPCごとの探索タイミングを分散する。
+- 毎フレーム全NPCが全プレイヤーを走査しない。
+
+## 4. LookAt
+
+- LookAtはローカル処理とし、同期しない。
+- Character正面を基準として、首の水平回転は左右それぞれ最大60度とする。
+- 上限は `maxLookYaw` で設定し、60度を超えて設定できないものとする。
+
+## 5. Animation
+
+### 5.1 利用者設定
+
+通常利用者は `VNPC_Character` に以下を設定する。
+
+- Idle Animation : `AnimationClip`
+- Walk Animation : `AnimationClip`
+- Run Animation : `AnimationClip`
+- Run Speed Threshold
+
+AnimationはIn Placeを前提とし、Transformを移動させない。
+
+- 停止中、待機中、プレイヤー近接停止中、会話による移動停止中はIdleとする。
+- 通常移動中はWalkとする。
+- Run閾値以上ではRunとする。
+- Run Clipが未設定の場合はWalkを継続する。
+- Walk Clipが未設定の場合はIdleを継続する。
+
+### 5.2 実移動速度
+
+Owner、RemoteともTransformの実移動量から表示用速度を算出する。
+
+```text
+measuredSpeed =
+Vector3.Distance(currentPosition, previousPosition)
+/
+Time.deltaTime
+```
+
+- RemoteのTransformは独自に補間または上書きしない。
+- VRCObjectSyncによる補間結果から速度を測定する。
+- 短時間の異常な速度変化では直前のAnimation Stateを維持する。
+- 規定時間以上変化が継続した場合は正常な新状態として採用する。
+- 平滑化対象は測定速度またはAnimation Stateのみとし、TransformはVRCObjectSyncへ任せる。
+- Ownership移行時は前回位置と速度判定状態を初期化する。
+
+### 5.3 速度基準
+
+- VRChat Player Mod SetterのWalk SpeedとRun Speedを参考値として扱う。
+- 標準参考値はWalk 2m/s、Run 4m/sとする。
+- 参照できない場合は基準速度設定をInspectorに表示し、Walk初期値を2m/sとする。
+- Idle判定は0付近の専用閾値を使用する。
+- WalkとRunの境界にはヒステリシスを設け、状態の頻繁な往復を防止する。
+
+### 5.4 Animator Controller
+
+Animator ControllerはEditorでState方式により生成する。
+
+```text
+Base Layer
+├ Idle
+├ Walk
+└ Run（Run Clipが存在する場合）
+```
+
+- Runtime UdonからAnimator Controllerを生成しない。
+- 内部Parameter名を通常利用者に入力させない。
+- Inspectorに `[Generate / Rebuild Animator]` を提供する。
+- ユーザー作成Controllerを無条件に上書きしない。
+
+生成先：
+
+```text
+Assets
+└ PeaceKunihiro
+  └ VNPC
+    ├ Editor
+    ├ Runtime
+    └ Settings
+```
+
+- 生成Animatorは `Settings` に保存する。
+- ファイル名は `VNPC_<Character名>.controller` とする。
+- 同名が存在する場合は `_001`、`_002` のように連番を付与する。
+- Character名に含まれるファイル名禁止文字は除去または置換する。
+- Characterに生成済みController参照を保持し、そのControllerのみRebuild対象とする。
+- `Settings` 外のControllerは上書きしない。
+
+## 6. 会話の排他制御
+
+同一Characterが同時に会話できるプレイヤーは1人のみとする。
+
+ManagerはCharacter数分の会話相手IDをManual Syncで管理する。
+
+```text
+communicatingPlayerIds[index]
+-1     : 会話なし
+0以上  : 会話中プレイヤーのplayerId
+```
+
+- 同期配列は必ずCharacter数で初期化する。
+- Character Indexと配列Indexの対応を固定する。
+- 会話開始・終了要求はManager Ownerが処理する。
+- 会話要求の送信者を検証し、要求側から渡されたplayerIdを無条件に信用しない。
+- 空いている場合のみ会話相手IDを登録する。
+- 使用中の場合、他プレイヤーからの会話開始要求を拒否する。
+- ManagerのOwnershipを会話プレイヤーへ移さない。
+- 会話UIはロック承認後に開始する。
+- 同期状態はLate Joinerにも適用する。
+
+### 6.1 会話中の移動
+
+- 会話状態になったCharacterのみ移動を停止する。
+- `PathLoop`、`PointArea`、`PlayerFollow` のすべてを停止する。
+- 他Characterは通常移動を継続する。
+- VRCObjectSyncは停止・無効化せず、常時同期する。
+- 会話中はIdle Animationを使用する。
+- 会話中の一時的なMessage、Choice Stateは話者のローカル状態とする。
+
+### 6.2 会話終了
+
+以下の場合に会話を終了する。
+
+- 会話が最終Messageへ到達した
+- 話者がClose操作を行った
+- 話者が `stopDistance` の範囲外へ出た
+- 話者がインスタンスから退出した
+- 話者のPlayer参照が無効になった
+- CharacterまたはManagerが無効化された
+- 会話Timeoutを超えた
+
+- 終了要求は現在の会話相手本人からの要求であることを検証する。
+- Manager Ownerは退出、無効参照、距離外、Timeout時に強制解除できる。
+- 会話終了時はMessage、Choice等のローカル会話Stateを初期化する。
+- 選択済みCommandによって変更されたGlobalFlagは初期化しない。
+
+### 6.3 移動復帰
+
+会話終了後はMoveStyleに応じて移動先を再計算する。
+
+- PathLoop：保持していた現在目的Waypointが有効なら、そのWaypointへの移動を再開する。無効な場合のみ最寄りの有効Waypointを選択する。
+- PointArea：現在位置を基準として次の固定候補地点を選択する。
+- PlayerFollow：追従候補を再探索する。
+- NavMeshを使用しないため、再計算後の移動経路は目的地への直線とする。
+- 会話開始前の待機タイマーは破棄し、移動先再計算後に移動を開始する。
+
+## 7. Manager自動割り当て
+
+Scene内のManager数に応じて以下のように動作する。
+
+```text
+0個
+→ 自動割り当てしない
+→ Inspectorに作成操作を表示
+
+1個
+→ Characterへ自動割り当て
+→ ManagerへCharacterを自動登録
+
+2個以上
+→ 自動割り当て・自動登録しない
+→ Inspectorで警告し、ユーザーがD&Dで明示指定
+```
+
+- 既に明示設定された参照を自動解除しない。
+- Character側Manager参照とManager側Characters配列の不整合をEditorで検証する。
+
+## 8. Portable Preset
+
+VNPC Character設定をProject間で移動するため、Editor限定で `*.vnpc` のExport / Importを提供する。
+
+```json
+{
+  "format": "VNPCCharacter",
+  "formatVersion": 1,
+  "frameworkVersion": "0.1.1"
+}
+```
+
+- 中身はJSONとする。
+- RuntimeではファイルI/Oを行わない。
+- JSONは専用DTOへ読み込み、Portable対象項目だけをCharacterへ個別コピーする。
+- Character全体へのJSON上書きを行わない。
+- 未知の新しい `formatVersion` は警告して読込を拒否する。
+- 古いVersionは将来Migrationを追加できる構造とする。
+- ImportはUndoに対応する。
+- enum、配列長、Message Index、Choice Index、Command番号を検証する。
+
+保存対象：
+
+- MoveStyle
+- MoveSpeed、WaitTime、ArrivalDistance等の移動設定
+- Follow設定
+- LookAt設定
+- Player近接停止設定
+- 会話、選択肢、Command
+- リアクション設定
+- Animation参考情報
+
+保存しないもの：
+
+- Manager参照
+- Path ID
+- AreaCenter
+- Scene内GameObject
+- DialoguePanel、Button、Text
+- CommandObject
+- Animator Controller
+- AnimationClipのObject参照、GUID、AssetPath
+
+Animation参考情報として以下だけを保存する。
+
+- Role
+- Source Asset File Name
+- Source Clip Name
+
+Import時にAnimationClipを自動割り当てしない。未設定の場合はInspectorにImported Referenceとして元ファイル名とClip名を表示する。
+
+## 9. Editor / Auto Setup
+
+Editor拡張はUdonSharp専用Editor APIを通して操作する。
+
+- `UdonSharpGUI.DrawDefaultUdonSharpBehaviourHeader` を使用する。
+- `SerializedObject` / `SerializedProperty` を優先する。
+- Proxyを直接変更した場合はUdon側へ変更を反映する。
+- UdonSharpBehaviour追加時はUdonSharp対応Undo APIを使用する。
+- Animator生成、AssetDatabase、PresetファイルI/OはすべてEditor側へ置く。
+
+Auto Setup対象：
+
+- Animator
+- VRCObjectSync
+- Managerが単一の場合の割り当てと登録
+
+Auto Setup対象外：
+
+- NavMeshAgent
+- Player検知用Trigger Collider
+- 複数存在するManagerの自動選択
+
+## 10. v0.1.1検証項目
+
+1. UdonSharp compile errorがないこと
+2. OwnerだけがCharacter Transformを操作すること
+3. PathLoop、PointArea、PlayerFollowがDirect Movementで動作すること
+4. Remote側でVRCObjectSyncのTransformが反映されること
+5. Remote側でも実移動速度からAnimationが切り替わること
+6. 首の水平回転が左右60度を超えないこと
+7. `stopDistance` 内にプレイヤーがいる間だけ対象NPCが停止すること
+8. 高負荷条件で探索頻度が最大4回/秒へ低下すること
+9. Idle、Walk、Run Stateが実速度に応じて切り替わること
+10. ユーザーAnimator Controllerを誤って上書きしないこと
+11. 同一Characterとの会話が単一プレイヤーに排他されること
+12. 会話中は対象Characterのみ停止すること
+13. 会話終了時にMoveStyle別の移動先が再計算されること
+14. 話者退出・距離外・Timeout時に会話ロックが解除されること
+15. GlobalFlagが会話終了で巻き戻らないこと
+16. `.vnpc` Export / ImportでScene参照を破壊しないこと
+17. AnimationClip未設定でもPresetをImportできること
+18. Imported ReferenceをInspectorで確認できること
