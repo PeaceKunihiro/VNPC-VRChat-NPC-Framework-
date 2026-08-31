@@ -2,13 +2,47 @@
 
 ## v0.1.2
 
-- `LinkageArea` MoveStyleを追加しました。親Transform直下の3頂点以上をXZ多角形として扱います。
-- 凸・凹多角形の内外判定と、決定論的な領域内候補地点生成を追加しました。
-- 領域外にいるCharacterは最寄り頂点へ復帰してから領域内移動を再開します。
-- `.vnpc`へLinkageAreaの候補地点数を保存するようにしました。Scene上のArea参照は従来どおり保存対象外です。
-- Character InspectorのMovement、Player Avoidance、Animations、Player Interactionを折りたたみ表示へ変更しました。
-- 現行UdonSharpで不要になった`ApplyProxyModifications()`呼び出しを削除しました。
-- Manager選択中にPathのWaypoint番号、接続線、進行方向をScene Viewへ表示する編集補助を追加しました。
+Path編集支援、LinkageArea、Inspector表示を追加し、現行UdonSharp SDKへのEditor互換性を更新しました。
+
+### LinkageArea
+
+- `VNPCMoveStyle.LinkageArea`を追加しました。既存MoveStyleの番号を維持するため末尾へ追加しています。
+- 指定した親Transform直下の3頂点以上を、Sibling Index順のXZ多角形として扱います。
+- Ray Casting法による凸・凹多角形の内外判定へ対応しました。
+- 境界から0.01m以内は領域内として扱います。
+- 自己交差、連続する重複頂点、面積を持たない多角形を無効な設定として検出します。
+- Halton列を使用し、非決定的な乱数に依存しない領域内候補地点を生成します。
+- 現在地から候補地点までを16分割して検査し、凹部などで領域外を横切る候補を除外します。
+- Characterが領域外にいる場合は最寄り頂点へ復帰してから領域内移動を再開します。
+- 候補を取得できない場合は待機して再試行し、毎Frameの重い再探索を避けます。
+- 会話終了後とOwnership移行後の目的地再計算へLinkageAreaを対応させました。
+- Choice CommandのMoveStyle変更でLinkageAreaを選択できるようにしました。
+
+### Path Scene View
+
+- `VNPC_Manager`選択中に、登録Pathの接続状態をScene Viewへ表示するEditor補助を追加しました。
+- Path親Transform直下のWaypointをSibling Index順に接続します。
+- Waypoint番号、Pathごとの色分け、接続線中央の進行方向矢印を表示します。
+- Waypointが2点の場合は重複しない1本、3点以上の場合は最後から最初へ戻るループを描画します。
+- 非アクティブなWaypointもRuntimeと同じ順序で表示し、`null`のPathは無視します。
+- 描画処理はEditor専用とし、Runtime/UdonへLineRendererや表示用GameObjectを追加しません。
+- Unity Scene View上でPathの接続線が表示されることを確認しました。
+
+### Inspector
+
+- Character InspectorのMovement、Player Avoidance、Animations、Player Interactionを個別のFoldoutへ変更しました。
+- Foldoutは初期状態を展開とし、閉じても設定値を変更しません。
+- General、Dialogue UI、Imported Animation References、各操作ボタンは常時表示を維持します。
+- LinkageArea選択時に多角形設定が無効な場合はInspectorへ警告を表示します。
+
+### Preset and Editor Compatibility
+
+- `.vnpc`のFramework Versionを`0.1.2`へ更新しました。
+- LinkageAreaの候補地点数をPresetの保存・復元対象へ追加しました。
+- Scene参照であるLinkage Area親TransformはPreset保存対象外とし、Import時の既存参照を維持します。
+- 旧Presetに候補地点数が存在しない場合は初期値24を使用します。
+- 現行UdonSharpでobsoleteかつno-opとなった`ApplyProxyModifications()`呼び出しを削除しました。
+- Undo、Dirty設定、`SerializedObject`によるInspector反映は維持しています。
 
 ## v0.1.1
 
