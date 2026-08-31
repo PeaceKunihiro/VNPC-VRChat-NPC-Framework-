@@ -8,6 +8,7 @@
 - `.vnpc`へLinkageAreaの候補地点数を保存するようにしました。Scene上のArea参照は従来どおり保存対象外です。
 - Character InspectorのMovement、Player Avoidance、Animations、Player Interactionを折りたたみ表示へ変更しました。
 - 現行UdonSharpで不要になった`ApplyProxyModifications()`呼び出しを削除しました。
+- Manager選択中にPathのWaypoint番号、接続線、進行方向をScene Viewへ表示する編集補助を追加しました。
 
 ## v0.1.1
 
