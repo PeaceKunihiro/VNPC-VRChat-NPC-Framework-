@@ -1,6 +1,5 @@
 #if UNITY_EDITOR
 using System.IO;
-using UdonSharpEditor;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -37,7 +36,6 @@ public static class VNPC_AnimatorBuilder
 
         Undo.RecordObject(character, "Store VNPC Animator");
         character.generatedAnimatorController = controller;
-        character.ApplyProxyModifications();
         EditorUtility.SetDirty(animator);
         EditorUtility.SetDirty(controller);
         AssetDatabase.SaveAssets();

@@ -20,7 +20,6 @@ public static class VNPC_EditorSetup
         {
             Undo.RecordObject(character, "Assign VNPC Manager");
             character.manager = managers[0];
-            character.ApplyProxyModifications();
         }
         RegisterWithExplicitManager(character);
         EditorUtility.SetDirty(character);
@@ -40,7 +39,6 @@ public static class VNPC_EditorSetup
         EnsureUniqueCharacterId(character, old);
         for (int i = 0; i < old.Length; i++) if (old[i] == character)
         {
-            character.ApplyProxyModifications();
             return;
         }
         Undo.RecordObject(character.manager, "Register VNPC Character");
@@ -48,7 +46,6 @@ public static class VNPC_EditorSetup
         for (int i = 0; i < old.Length; i++) next[i] = old[i];
         next[old.Length] = character;
         character.manager.characters = next;
-        character.manager.ApplyProxyModifications();
         EditorUtility.SetDirty(character.manager);
     }
 

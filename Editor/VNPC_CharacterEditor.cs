@@ -34,7 +34,6 @@ public class VNPC_CharacterEditor : Editor
                 VNPC_Manager manager = VNPC_EditorSetup.CreateManager();
                 Undo.RecordObject(character, "Assign VNPC Manager");
                 character.manager = manager;
-                character.ApplyProxyModifications();
                 VNPC_EditorSetup.RegisterWithExplicitManager(character);
             }
         }

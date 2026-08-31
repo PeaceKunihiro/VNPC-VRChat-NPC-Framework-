@@ -483,7 +483,8 @@ Manager 2個以上
 
 - Custom Inspectorの先頭でUdonSharp Behaviour Headerを描画する。
 - `SerializedObject`／`SerializedProperty`を使用する。
-- Proxyを直接変更した場合はBacking Udonへ反映する。
+- Editor時のProxy変更は現行UdonSharpの自動反映を使用し、obsoleteな`ApplyProxyModifications()`を呼び出さない。
+- Play Mode中の実行UdonBehaviour更新が必要なEditor機能を追加する場合だけ、現行APIの`CopyProxyToUdon`を検討する。
 - UdonSharpBehaviour生成にはUdonSharp対応Undo APIを使用する。
 - Editorコードは`Editor`フォルダかつ`UNITY_EDITOR`条件内へ配置する。
 

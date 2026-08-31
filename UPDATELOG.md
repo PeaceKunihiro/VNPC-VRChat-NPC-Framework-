@@ -7,6 +7,7 @@
 - 領域外にいるCharacterは最寄り頂点へ復帰してから領域内移動を再開します。
 - `.vnpc`へLinkageAreaの候補地点数を保存するようにしました。Scene上のArea参照は従来どおり保存対象外です。
 - Character InspectorのMovement、Player Avoidance、Animations、Player Interactionを折りたたみ表示へ変更しました。
+- 現行UdonSharpで不要になった`ApplyProxyModifications()`呼び出しを削除しました。
 
 ## v0.1.1
 

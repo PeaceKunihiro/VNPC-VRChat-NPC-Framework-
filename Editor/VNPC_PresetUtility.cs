@@ -1,7 +1,6 @@
 #if UNITY_EDITOR
 using System;
 using System.IO;
-using UdonSharpEditor;
 using UnityEditor;
 using UnityEngine;
 using VNPC;
@@ -129,7 +128,6 @@ public static class VNPC_PresetUtility
         c.importedIdleAsset = p.idleSourceAsset; c.importedIdleClip = p.idleSourceClip;
         c.importedWalkAsset = p.walkSourceAsset; c.importedWalkClip = p.walkSourceClip;
         c.importedRunAsset = p.runSourceAsset; c.importedRunClip = p.runSourceClip;
-        c.ApplyProxyModifications();
         EditorUtility.SetDirty(c);
     }
 
