@@ -3,11 +3,11 @@
 ## 1. 文書情報
 
 - Framework名：VNPC（VRChat NPC Framework）
-- 現行仕様Version：v0.1.1
+- 現行仕様Version：v0.1.2
 - 対象：VRChat Worlds SDK / UdonSharp
 - Unity：VRChatがサポートするUnity 2022.3系
 
-本書は現在のRuntimeおよびEditor実装に対応する仕様を定義する。将来候補は「未実装」に明記し、実装済み仕様とは区別する。
+本書はv0.1.2で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
 
 ## 2. 目的
 
@@ -111,7 +111,8 @@ NPC
 ## 7. Path管理
 
 - Managerの`paths[]`へPath親Transformを登録する。
-- Path親Transformの子をWaypointとして使用する。
+- Path親Transformの直下の子をWaypointとして使用する。
+- Waypointの接続順はPath親Transform内のSibling Index順とする。
 - Waypointは静的なScene参照であり、個別同期しない。
 - Path IDはManagerの配列Indexとする。
 - Point IndexはPathの子数で循環させる。
@@ -123,6 +124,36 @@ Path Root
 ├ P2
 └ P3
 ```
+
+### 7.1 Path Scene View編集補助（v0.1.2）
+
+- `VNPC_Manager`でPathとして指定された親Transformごとに、直下のWaypoint間をScene View上の接続線で表示する。
+- 接続線はEditor専用処理から`Handles.DrawLine`を使用して描画する。
+- RuntimeおよびUdon処理へ`UnityEditor` API、LineRenderer、接続線用GameObjectを含めない。
+- 接続線はPathの基本順序を表し、Character固有の`step`は反映しない。
+- 非アクティブなWaypointもRuntimeの`GetChild`処理と一致させて表示対象とする。
+- `paths[]`内の`null`は安全に無視する。
+
+Waypoint数ごとの描画規則：
+
+| Waypoint数 | 接続線 |
+|---:|---|
+| 0 | 表示しない |
+| 1 | 接続線を表示しない |
+| 2 | 2点間を1本だけ表示する |
+| 3以上 | Sibling Index順に隣接点を結び、最後と最初も結ぶ |
+
+- 3点以上のPathでは、各Waypointから伸びる接続線は前後の隣接Waypointに対する最大2本とする。
+- Scene Viewを過度に占有しないよう、原則として対象の`VNPC_Manager`選択中だけ表示する。
+- Waypoint番号を表示し、必要に応じて進行方向を識別できるEditor表示を行う。
+
+### 7.2 分岐Pathの扱い（v0.1.2）
+
+- 分岐、合流、条件付き接続およびWaypointごとの複数接続先は正式サポートしない。
+- Pathは全体が一本の巡回順序になるよう配置する。
+- 同一地点を複数回通過させる場合は、同じ座標へ別のWaypoint GameObjectを配置する。
+- 上記は条件分岐ではなく、Sibling Indexで定義された一筆書きの巡回経路として扱う。
+- 明示的なLink Object、Waypoint隣接配列および経路探索Graphはv0.1.2へ導入しない。
 
 ## 8. Direct Movement
 
@@ -589,10 +620,15 @@ Assets
 20. ImportでScene参照とAnimationClipが維持されること
 21. AnimationClip未設定でもImported Referenceを確認できること
 22. Managerが複数の場合に自動選択されないこと
+23. Manager選択中にPathのWaypoint番号と接続線がScene Viewへ表示されること
+24. Waypoint数0、1、2、3以上で規定どおりに接続線が描画されること
+25. 非アクティブなWaypointを含め、Runtimeと同じSibling Index順で表示されること
+26. `paths[]`に`null`が含まれてもEditor例外が発生しないこと
+27. Path編集補助がRuntime/UdonへEditor APIや表示用Objectを持ち込まないこと
 
 ## 20. 未実装・将来候補
 
-次は現行v0.1.1へ実装されていない。
+次は現行v0.1.2の正式仕様へ含めない。
 
 - LinkageArea
 - NavMeshによるStatic障害物回避
@@ -602,7 +638,6 @@ Assets
 - Talk Animation専用State
 - 複数Idle Pattern
 - Dialogue UI自動生成
-- Path Scene View可視化
 - Manager専用Custom Inspector
 - Player探索のManager一括共有
 - 実機Profilerに基づく大規模NPC最適化
