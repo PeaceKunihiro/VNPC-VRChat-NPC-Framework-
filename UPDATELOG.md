@@ -1,5 +1,13 @@
 # VNPC Update Log
 
+## v0.1.2
+
+- `LinkageArea` MoveStyleを追加しました。親Transform直下の3頂点以上をXZ多角形として扱います。
+- 凸・凹多角形の内外判定と、決定論的な領域内候補地点生成を追加しました。
+- 領域外にいるCharacterは最寄り頂点へ復帰してから領域内移動を再開します。
+- `.vnpc`へLinkageAreaの候補地点数を保存するようにしました。Scene上のArea参照は従来どおり保存対象外です。
+- Character InspectorのMovement、Player Avoidance、Animations、Player Interactionを折りたたみ表示へ変更しました。
+
 ## v0.1.1
 
 v0.1.0のDirect Movementを基礎として、プレイヤー探索、視線制限、会話排他、Animator生成、Preset、UdonSharp Editor連携を現在の実装へ統合しました。

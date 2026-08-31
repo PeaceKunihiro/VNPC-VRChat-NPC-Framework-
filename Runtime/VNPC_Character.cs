@@ -6,7 +6,7 @@ using VRC.Udon;
 
 namespace VNPC
 {
-    public enum VNPCMoveStyle { None, PathLoop, PointArea, PlayerFollow }
+    public enum VNPCMoveStyle { None, PathLoop, PointArea, PlayerFollow, LinkageArea }
 
     [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
     [RequireComponent(typeof(Animator), typeof(VRC.SDK3.Components.VRCObjectSync))]
@@ -28,6 +28,9 @@ namespace VNPC
         public Transform areaCenter;
         public float areaRadius = 3f;
         [Range(1, 24)] public int areaDirectionCount = 24;
+        [Tooltip("The direct children define the LinkageArea polygon in Sibling Index order.")]
+        public Transform linkageArea;
+        [Range(3, 64)] public int linkageCandidateCount = 24;
         public float followDistance = 2f;
         public float followSearchDistance = 10f;
         [Range(0f, 180f)] public float followSearchAngle = 60f;
@@ -264,7 +267,182 @@ namespace VNPC
                 destination = center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * areaRadius;
                 hasDestination = true;
             }
+            else if (moveStyle == VNPCMoveStyle.LinkageArea)
+            {
+                RecalculateLinkageDestination(advance);
+            }
             else hasDestination = false;
+        }
+
+        private void RecalculateLinkageDestination(bool advance)
+        {
+            int vertexCount = linkageArea == null ? 0 : linkageArea.childCount;
+            if (vertexCount < 3 || !IsValidLinkagePolygon()) { DeferLinkageRetry(); return; }
+            if (advance) areaIndex += step == 0 ? 1 : step;
+
+            if (!IsInsideLinkageAreaUnchecked(transform.position))
+            {
+                float nearestDistance = float.MaxValue;
+                Vector3 nearest = transform.position;
+                for (int i = 0; i < vertexCount; i++)
+                {
+                    Vector3 point = linkageArea.GetChild(i).position;
+                    float distance = (point - transform.position).sqrMagnitude;
+                    if (distance < nearestDistance) { nearestDistance = distance; nearest = point; }
+                }
+                destination = nearest;
+                hasDestination = true;
+                return;
+            }
+
+            Vector3 min = linkageArea.GetChild(0).position;
+            Vector3 max = min;
+            float height = 0f;
+            for (int i = 0; i < vertexCount; i++)
+            {
+                Vector3 point = linkageArea.GetChild(i).position;
+                min.x = Mathf.Min(min.x, point.x); min.z = Mathf.Min(min.z, point.z);
+                max.x = Mathf.Max(max.x, point.x); max.z = Mathf.Max(max.z, point.z);
+                height += point.y;
+            }
+            height /= vertexCount;
+
+            int candidates = Mathf.Clamp(linkageCandidateCount, 3, 64);
+            int wanted = ((areaIndex % candidates) + candidates) % candidates;
+            int attempts = candidates * 16;
+            int sequenceStart = wanted * 16 + 1;
+            for (int offset = 0; offset < attempts; offset++)
+            {
+                int sequence = sequenceStart + offset;
+                float x = Mathf.Lerp(min.x, max.x, Halton(sequence, 2));
+                float z = Mathf.Lerp(min.z, max.z, Halton(sequence, 3));
+                Vector3 candidate = new Vector3(x, height, z);
+                if (!IsInsideLinkageAreaUnchecked(candidate)) continue;
+                if (!IsLinkageSegmentInside(transform.position, candidate)) continue;
+                destination = candidate;
+                hasDestination = true;
+                return;
+            }
+            DeferLinkageRetry();
+        }
+
+        private void DeferLinkageRetry()
+        {
+            hasDestination = false;
+            waiting = true;
+            waitUntil = Time.time + Mathf.Max(0.1f, waitTime);
+        }
+
+        private float Halton(int index, int radix)
+        {
+            float result = 0f;
+            float fraction = 1f / radix;
+            while (index > 0)
+            {
+                result += fraction * (index % radix);
+                index /= radix;
+                fraction /= radix;
+            }
+            return result;
+        }
+
+        public bool IsInsideLinkageArea(Vector3 point)
+        {
+            return IsValidLinkagePolygon() && IsInsideLinkageAreaUnchecked(point);
+        }
+
+        public bool IsLinkageAreaValid()
+        {
+            return IsValidLinkagePolygon();
+        }
+
+        private bool IsInsideLinkageAreaUnchecked(Vector3 point)
+        {
+            int count = linkageArea == null ? 0 : linkageArea.childCount;
+            if (count < 3) return false;
+            bool inside = false;
+            Vector3 previous = linkageArea.GetChild(count - 1).position;
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 current = linkageArea.GetChild(i).position;
+                if (DistanceToSegmentXZ(point, previous, current) <= 0.01f) return true;
+                bool crosses = (current.z > point.z) != (previous.z > point.z);
+                if (crosses)
+                {
+                    float intersectionX = (previous.x - current.x) * (point.z - current.z) / (previous.z - current.z) + current.x;
+                    if (point.x < intersectionX) inside = !inside;
+                }
+                previous = current;
+            }
+            return inside;
+        }
+
+        private bool IsLinkageSegmentInside(Vector3 from, Vector3 to)
+        {
+            const int samples = 16;
+            for (int i = 1; i < samples; i++)
+                if (!IsInsideLinkageAreaUnchecked(Vector3.Lerp(from, to, i / (float)samples))) return false;
+            return true;
+        }
+
+        private bool IsValidLinkagePolygon()
+        {
+            int count = linkageArea == null ? 0 : linkageArea.childCount;
+            if (count < 3) return false;
+            float twiceArea = 0f;
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 a = linkageArea.GetChild(i).position;
+                Vector3 b = linkageArea.GetChild((i + 1) % count).position;
+                if (new Vector2(b.x - a.x, b.z - a.z).sqrMagnitude <= 0.000001f) return false;
+                twiceArea += a.x * b.z - b.x * a.z;
+            }
+            if (Mathf.Abs(twiceArea) <= 0.0001f) return false;
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 a = linkageArea.GetChild(i).position;
+                Vector3 b = linkageArea.GetChild((i + 1) % count).position;
+                for (int j = i + 1; j < count; j++)
+                {
+                    if (j == i || j == (i + 1) % count || (j + 1) % count == i) continue;
+                    Vector3 c = linkageArea.GetChild(j).position;
+                    Vector3 d = linkageArea.GetChild((j + 1) % count).position;
+                    if (SegmentsIntersectXZ(a, b, c, d)) return false;
+                }
+            }
+            return true;
+        }
+
+        private bool SegmentsIntersectXZ(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        {
+            float abC = CrossXZ(a, b, c);
+            float abD = CrossXZ(a, b, d);
+            float cdA = CrossXZ(c, d, a);
+            float cdB = CrossXZ(c, d, b);
+            if (((abC > 0.00001f && abD < -0.00001f) || (abC < -0.00001f && abD > 0.00001f)) &&
+                ((cdA > 0.00001f && cdB < -0.00001f) || (cdA < -0.00001f && cdB > 0.00001f))) return true;
+            if (Mathf.Abs(abC) <= 0.00001f && DistanceToSegmentXZ(c, a, b) <= 0.00001f) return true;
+            if (Mathf.Abs(abD) <= 0.00001f && DistanceToSegmentXZ(d, a, b) <= 0.00001f) return true;
+            if (Mathf.Abs(cdA) <= 0.00001f && DistanceToSegmentXZ(a, c, d) <= 0.00001f) return true;
+            if (Mathf.Abs(cdB) <= 0.00001f && DistanceToSegmentXZ(b, c, d) <= 0.00001f) return true;
+            return false;
+        }
+
+        private float CrossXZ(Vector3 a, Vector3 b, Vector3 c)
+        {
+            return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+        }
+
+        private float DistanceToSegmentXZ(Vector3 point, Vector3 start, Vector3 end)
+        {
+            Vector2 p = new Vector2(point.x, point.z);
+            Vector2 a = new Vector2(start.x, start.z);
+            Vector2 b = new Vector2(end.x, end.z);
+            Vector2 edge = b - a;
+            float lengthSquared = edge.sqrMagnitude;
+            if (lengthSquared <= 0.000001f) return Vector2.Distance(p, a);
+            float amount = Mathf.Clamp01(Vector2.Dot(p - a, edge) / lengthSquared);
+            return Vector2.Distance(p, a + edge * amount);
         }
 
         private void RecalculateAfterCommunication()
@@ -277,7 +455,7 @@ namespace VNPC
                 hasDestination = false;
                 ScanPlayers();
             }
-            else RecalculateDestination(moveStyle == VNPCMoveStyle.PointArea);
+            else RecalculateDestination(moveStyle == VNPCMoveStyle.PointArea || moveStyle == VNPCMoveStyle.LinkageArea);
         }
 
         private void UpdateMeasuredSpeed()
@@ -404,7 +582,7 @@ namespace VNPC
             if (command == 4 && animator != null) animator.SetInteger(ActionParameter, parameter);
             if ((command == 5 || command == 6) && commandObjects != null && parameter >= 0 && parameter < commandObjects.Length && commandObjects[parameter] != null)
                 commandObjects[parameter].SetActive(command == 5);
-            if (command == 7 && parameter >= 0 && parameter <= (int)VNPCMoveStyle.PlayerFollow)
+            if (command == 7 && parameter >= 0 && parameter <= (int)VNPCMoveStyle.LinkageArea)
             {
                 moveStyle = (VNPCMoveStyle)parameter;
                 RecalculateDestination(false);

@@ -230,6 +230,22 @@ arrivalDistance以内で到着
 - Follow対象本人もPlayer近接停止判定から除外しない。
 - `stopDistance > followDistance`の場合、Inspectorへ接近できない旨を表示する。
 
+### 8.6 MoveStyle.LinkageArea（v0.1.2）
+
+- `linkageArea`に指定した親Transformの直下の子を多角形頂点として使用する。
+- 頂点数は3以上とし、Sibling Index順に辺を構成して最後と最初を接続する。
+- 頂点はXZ平面へ投影し、Ray Casting法で多角形の内外を判定する。
+- 凸多角形と凹多角形へ対応し、境界から0.01m以内は内側として扱う。
+- 自己交差、連続する同一座標および面積を持たない多角形は設定不備とする。
+- 候補地点は多角形のBounds内へHalton列で決定論的に生成する。
+- `linkageCandidateCount`は3～64、初期値24とする。
+- 候補Indexは`step`に従って循環し、`step == 0`は1として扱う。
+- 現在地から候補地点までを16分割して検査し、全検査点が多角形内にある候補だけを目的地とする。
+- 候補探索回数には上限を設け、適切な候補がなければ移動しない。
+- Characterが領域外にいる場合は、最も近い頂点へ復帰してから領域内候補を選択する。
+- 目的地のY座標は全頂点の平均値とし、v0.1.2では水平な移動領域を前提とする。
+- NavMesh、ColliderおよびRuntimeの非決定的な乱数は使用しない。
+
 ## 9. Player探索と近接停止
 
 ### 9.1 検知方式
@@ -471,7 +487,16 @@ Manager 2個以上
 - UdonSharpBehaviour生成にはUdonSharp対応Undo APIを使用する。
 - Editorコードは`Editor`フォルダかつ`UNITY_EDITOR`条件内へ配置する。
 
-### 15.2 Auto Setup
+### 15.2 Inspector Foldout（v0.1.2）
+
+- Movement、Player Avoidance、Animations、Player Interactionを個別に折りたためるようにする。
+- Foldoutの初期状態は展開とする。
+- Foldout状態はEditor内だけで保持し、Runtime/Udonのフィールドへ追加しない。
+- Foldoutを閉じても設定値を変更または初期化しない。
+- General、Dialogue UI、Imported Animation Referencesおよび各操作ボタンはFoldout対象外とする。
+- 各設定値は`SerializedProperty`から描画する。
+
+### 15.3 Auto Setup
 
 Auto Setup対象：
 
@@ -507,7 +532,7 @@ Inspector警告：
 {
   "format": "VNPCCharacter",
   "formatVersion": 1,
-  "frameworkVersion": "0.1.1"
+  "frameworkVersion": "0.1.2"
 }
 ```
 
@@ -521,6 +546,7 @@ Inspector警告：
 - Start Index、Step
 - Move Speed、Turn Speed、Wait Time、Arrival Distance
 - PointAreaの半径と方向数
+- LinkageAreaの候補地点数
 - PlayerFollow設定
 - Stop Distance
 - Animation速度参考値と平滑化設定
@@ -534,6 +560,7 @@ Inspector警告：
 - Manager参照
 - Path ID
 - Area Center
+- Linkage Area
 - Dialogue Panel、Text、Button
 - Command Object
 - Animator Controller
@@ -625,12 +652,17 @@ Assets
 25. 非アクティブなWaypointを含め、Runtimeと同じSibling Index順で表示されること
 26. `paths[]`に`null`が含まれてもEditor例外が発生しないこと
 27. Path編集補助がRuntime/UdonへEditor APIや表示用Objectを持ち込まないこと
+28. 4区分のInspector Foldoutを個別に開閉でき、閉じても値が維持されること
+29. LinkageAreaが3頂点未満の場合に移動しないこと
+30. 凸・凹LinkageAreaの内外および境界を判定できること
+31. LinkageAreaの目的地と移動線上の検査点が領域内に収まること
+32. LinkageArea外から最寄り頂点へ復帰できること
+33. 同じLinkageArea設定から決定論的な候補地点が得られること
 
 ## 20. 未実装・将来候補
 
 次は現行v0.1.2の正式仕様へ含めない。
 
-- LinkageArea
 - NavMeshによるStatic障害物回避
 - NPC同士の衝突回避
 - NPC同士のGreeting／会話

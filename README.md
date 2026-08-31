@@ -2,11 +2,11 @@
 
 VNPCは、VRChatの交流WorldへHumanoid NPCを配置するためのUdonSharp Frameworkです。
 
-現在の仕様Versionは **v0.1.1** です。
+現在の仕様Versionは **v0.1.2** です。
 
 ## 主な機能
 
-- PathLoop／PointArea／PlayerFollowによるDirect Movement
+- PathLoop／PointArea／PlayerFollow／LinkageAreaによるDirect Movement
 - VRCObjectSyncによるTransform同期
 - Idle／Walk／Run Animatorの自動生成
 - Playerへの視線追従と近接時の移動停止

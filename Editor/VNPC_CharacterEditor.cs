@@ -8,6 +8,11 @@ using VRC.SDK3.Components;
 [CustomEditor(typeof(VNPC_Character))]
 public class VNPC_CharacterEditor : Editor
 {
+    private static bool movementExpanded = true;
+    private static bool avoidanceExpanded = true;
+    private static bool animationsExpanded = true;
+    private static bool interactionExpanded = true;
+
     public override void OnInspectorGUI()
     {
         if (UdonSharpGUI.DrawDefaultUdonSharpBehaviourHeader(target)) return;
@@ -35,9 +40,84 @@ public class VNPC_CharacterEditor : Editor
         }
         if (character.moveStyle == VNPCMoveStyle.PlayerFollow && character.stopDistance > character.followDistance)
             EditorGUILayout.HelpBox("Stop DistanceがFollow Distanceより大きいため、NPCはFollow Distanceまで接近できません。", MessageType.Info);
+        if (character.moveStyle == VNPCMoveStyle.LinkageArea && !character.IsLinkageAreaValid())
+            EditorGUILayout.HelpBox("Linkage Areaには、自己交差しない3頂点以上の有効なXZ多角形を指定してください。", MessageType.Warning);
 
         serializedObject.Update();
-        DrawPropertiesExcluding(serializedObject, "m_Script");
+        EditorGUILayout.LabelField("General", EditorStyles.boldLabel);
+        DrawProperty("manager");
+        DrawProperty("characterId");
+
+        movementExpanded = EditorGUILayout.Foldout(movementExpanded, "Movement", true);
+        if (movementExpanded)
+        {
+            EditorGUI.indentLevel++;
+            DrawProperty("moveStyle");
+            DrawProperty("pathId");
+            DrawProperty("startIndex");
+            DrawProperty("step");
+            DrawProperty("moveSpeed");
+            DrawProperty("turnSpeed");
+            DrawProperty("waitTime");
+            DrawProperty("arrivalDistance");
+            DrawProperty("areaCenter");
+            DrawProperty("areaRadius");
+            DrawProperty("areaDirectionCount");
+            DrawProperty("linkageArea");
+            DrawProperty("linkageCandidateCount");
+            DrawProperty("followDistance");
+            DrawProperty("followSearchDistance");
+            DrawProperty("followSearchAngle");
+            EditorGUI.indentLevel--;
+        }
+
+        avoidanceExpanded = EditorGUILayout.Foldout(avoidanceExpanded, "Player Avoidance", true);
+        if (avoidanceExpanded)
+        {
+            EditorGUI.indentLevel++;
+            DrawProperty("stopDistance");
+            EditorGUI.indentLevel--;
+        }
+
+        animationsExpanded = EditorGUILayout.Foldout(animationsExpanded, "Animations", true);
+        if (animationsExpanded)
+        {
+            EditorGUI.indentLevel++;
+            DrawProperty("idleAnimation");
+            DrawProperty("walkAnimation");
+            DrawProperty("runAnimation");
+            DrawProperty("walkSpeedReference");
+            DrawProperty("runSpeedReference");
+            DrawProperty("idleEnterSpeed");
+            DrawProperty("idleExitSpeed");
+            DrawProperty("speedSmoothing");
+            EditorGUI.indentLevel--;
+        }
+
+        interactionExpanded = EditorGUILayout.Foldout(interactionExpanded, "Player Interaction", true);
+        if (interactionExpanded)
+        {
+            EditorGUI.indentLevel++;
+            DrawProperty("lookAtPlayer");
+            DrawProperty("lookDistance");
+            DrawProperty("lookWeight");
+            DrawProperty("maxLookYaw");
+            EditorGUI.indentLevel--;
+        }
+
+        EditorGUILayout.LabelField("Dialogue UI (local only)", EditorStyles.boldLabel);
+        DrawProperty("dialoguePanel");
+        DrawProperty("dialogueText");
+        DrawProperty("choiceButtons");
+        DrawProperty("choiceLabels");
+        DrawProperty("messages");
+        DrawProperty("messageChoiceStarts");
+        DrawProperty("messageChoiceCounts");
+        DrawProperty("choiceTexts");
+        DrawProperty("choiceNextMessages");
+        DrawProperty("choiceCommands");
+        DrawProperty("choiceParameters");
+        DrawProperty("commandObjects");
         serializedObject.ApplyModifiedProperties();
 
         DrawImportedReferences(character);
@@ -51,6 +131,12 @@ public class VNPC_CharacterEditor : Editor
         if (GUILayout.Button("Export .vnpc")) VNPC_PresetUtility.Export(character);
         if (GUILayout.Button("Import .vnpc")) VNPC_PresetUtility.Import(character);
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void DrawProperty(string propertyName)
+    {
+        SerializedProperty property = serializedObject.FindProperty(propertyName);
+        if (property != null) EditorGUILayout.PropertyField(property, true);
     }
 
     private static void DrawImportedReferences(VNPC_Character character)

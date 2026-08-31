@@ -11,7 +11,7 @@ internal class VNPCPreset
 {
     public string format = "VNPCCharacter";
     public int formatVersion = 1;
-    public string frameworkVersion = "0.1.1";
+    public string frameworkVersion = "0.1.2";
     public int moveStyle;
     public int startIndex;
     public int step;
@@ -21,6 +21,7 @@ internal class VNPCPreset
     public float arrivalDistance;
     public float areaRadius;
     public int areaDirectionCount;
+    public int linkageCandidateCount;
     public float followDistance;
     public float followSearchDistance;
     public float followSearchAngle;
@@ -87,6 +88,7 @@ public static class VNPC_PresetUtility
             moveStyle = (int)c.moveStyle, startIndex = c.startIndex, step = c.step,
             moveSpeed = c.moveSpeed, turnSpeed = c.turnSpeed, waitTime = c.waitTime,
             arrivalDistance = c.arrivalDistance, areaRadius = c.areaRadius, areaDirectionCount = c.areaDirectionCount,
+            linkageCandidateCount = c.linkageCandidateCount,
             followDistance = c.followDistance, followSearchDistance = c.followSearchDistance, followSearchAngle = c.followSearchAngle,
             stopDistance = c.stopDistance, walkSpeedReference = c.walkSpeedReference, runSpeedReference = c.runSpeedReference,
             idleEnterSpeed = c.idleEnterSpeed, idleExitSpeed = c.idleExitSpeed, speedSmoothing = c.speedSmoothing,
@@ -104,10 +106,11 @@ public static class VNPC_PresetUtility
     private static void ApplyPreset(VNPC_Character c, VNPCPreset p)
     {
         Undo.RecordObject(c, "Import VNPC Preset");
-        c.moveStyle = p.moveStyle >= 0 && p.moveStyle <= (int)VNPCMoveStyle.PlayerFollow ? (VNPCMoveStyle)p.moveStyle : VNPCMoveStyle.None;
+        c.moveStyle = p.moveStyle >= 0 && p.moveStyle <= (int)VNPCMoveStyle.LinkageArea ? (VNPCMoveStyle)p.moveStyle : VNPCMoveStyle.None;
         c.startIndex = p.startIndex; c.step = p.step; c.moveSpeed = Mathf.Max(0f, p.moveSpeed); c.turnSpeed = Mathf.Max(0f, p.turnSpeed);
         c.waitTime = Mathf.Max(0f, p.waitTime); c.arrivalDistance = Mathf.Max(0f, p.arrivalDistance);
         c.areaRadius = Mathf.Max(0f, p.areaRadius); c.areaDirectionCount = Mathf.Clamp(p.areaDirectionCount, 1, 24);
+        c.linkageCandidateCount = p.linkageCandidateCount <= 0 ? 24 : Mathf.Clamp(p.linkageCandidateCount, 3, 64);
         c.followDistance = Mathf.Max(0f, p.followDistance); c.followSearchDistance = Mathf.Max(0f, p.followSearchDistance);
         c.followSearchAngle = Mathf.Clamp(p.followSearchAngle, 0f, 180f); c.stopDistance = Mathf.Max(0f, p.stopDistance);
         c.walkSpeedReference = Mathf.Max(0f, p.walkSpeedReference); c.runSpeedReference = Mathf.Max(0f, p.runSpeedReference);
