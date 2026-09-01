@@ -2,7 +2,7 @@
 
 VNPCは、VRChatの交流WorldへHumanoid NPCを配置するためのUdonSharp Frameworkです。
 
-現在の仕様Versionは **v0.1.2** です。
+現在の仕様Versionは **v0.1.3** です。
 
 ## 主な機能
 

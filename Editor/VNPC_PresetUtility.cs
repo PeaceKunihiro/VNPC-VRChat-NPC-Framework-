@@ -10,7 +10,7 @@ internal class VNPCPreset
 {
     public string format = "VNPCCharacter";
     public int formatVersion = 1;
-    public string frameworkVersion = "0.1.2";
+    public string frameworkVersion = "0.1.3";
     public int moveStyle;
     public int startIndex;
     public int step;

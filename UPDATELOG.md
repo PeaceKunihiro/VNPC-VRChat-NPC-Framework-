@@ -1,5 +1,22 @@
 # VNPC Update Log
 
+## v0.1.3
+
+### Path Scene View
+
+- Scene ViewのGizmosが有効な間、Managerの選択状態にかかわらずPathを常時表示するようにしました。
+- Path線、Waypoint番号、進行方向矢印はEditor専用描画とし、RuntimeおよびVRChat Buildへ含めません。
+- WaypointをSibling Index順に検索し、最初に見つかったRendererの`sharedMaterial`からPath色を取得する機能を追加しました。
+- Material Colorは`_BaseColor`、`_Color`の順に取得します。
+- Renderer、Materialまたは対応Color Propertyがない場合は、Path別のFallback Colorを使用します。
+
+### Manager Inspector
+
+- Pathごとに`Use Waypoint Material Color`を切り替えられるようにしました。
+- Pathごとに独立した`Fallback Color`カラーピッカーを追加し、初期値を赤にしました。
+- `paths[]`の要素数に合わせて表示色設定配列を自動調整します。
+- Material Colorを無効にした場合は、常に指定したFallback Colorを使用します。
+
 ## v0.1.2
 
 Path編集支援、LinkageArea、Inspector表示を追加し、現行UdonSharp SDKへのEditor互換性を更新しました。

@@ -13,6 +13,8 @@ namespace VNPC
         public VNPC_Character[] characters;
         [Tooltip("Each path Transform contains its waypoints as children.")]
         public Transform[] paths;
+        [HideInInspector] public Color[] pathSceneColors = new Color[0];
+        [HideInInspector] public bool[] useWaypointMaterialColors = new bool[0];
         [Min(1f)] public float communicationTimeout = 120f;
 
         [UdonSynced, SerializeField] private int globalFlags;

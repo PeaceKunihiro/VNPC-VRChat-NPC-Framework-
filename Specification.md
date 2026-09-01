@@ -3,11 +3,11 @@
 ## 1. 文書情報
 
 - Framework名：VNPC（VRChat NPC Framework）
-- 現行仕様Version：v0.1.2
+- 現行仕様Version：v0.1.3
 - 対象：VRChat Worlds SDK / UdonSharp
 - Unity：VRChatがサポートするUnity 2022.3系
 
-本書はv0.1.2で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
+本書はv0.1.3で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
 
 ## 2. 目的
 
@@ -125,7 +125,7 @@ Path Root
 └ P3
 ```
 
-### 7.1 Path Scene View編集補助（v0.1.2）
+### 7.1 Path Scene View編集補助（v0.1.3）
 
 - `VNPC_Manager`でPathとして指定された親Transformごとに、直下のWaypoint間をScene View上の接続線で表示する。
 - 接続線はEditor専用処理から`Handles.DrawLine`を使用して描画する。
@@ -144,8 +144,16 @@ Waypoint数ごとの描画規則：
 | 3以上 | Sibling Index順に隣接点を結び、最後と最初も結ぶ |
 
 - 3点以上のPathでは、各Waypointから伸びる接続線は前後の隣接Waypointに対する最大2本とする。
-- Scene Viewを過度に占有しないよう、原則として対象の`VNPC_Manager`選択中だけ表示する。
+- Scene ViewのGizmosが有効な間は、`VNPC_Manager`の選択状態にかかわらず常時表示する。
 - Waypoint番号を表示し、必要に応じて進行方向を識別できるEditor表示を行う。
+- Pathごとに`Use Waypoint Material Color`と`Fallback Color`を設定できるようにする。
+- `Fallback Color`の初期値は赤とする。
+- Material Colorを使用する場合は、WaypointをSibling Index順に検索し、最初に見つかった直下Rendererの`sharedMaterial`から取得する。
+- Material Propertyは`_BaseColor`、`_Color`の順に検索する。
+- Renderer、Materialまたは対応Color Propertyがない場合は`Fallback Color`を使用する。
+- Material Colorを使用しない場合は常に`Fallback Color`を使用する。
+- 複数Pathの自動色設定とFallback ColorはPath Indexごとに独立して保持する。
+- Scene描画はEditor専用とし、VRChatへのビルドには線、矢印、Label、Rendererを含めない。
 
 ### 7.2 分岐Pathの扱い（v0.1.2）
 
@@ -533,7 +541,7 @@ Inspector警告：
 {
   "format": "VNPCCharacter",
   "formatVersion": 1,
-  "frameworkVersion": "0.1.2"
+  "frameworkVersion": "0.1.3"
 }
 ```
 
@@ -648,7 +656,7 @@ Assets
 20. ImportでScene参照とAnimationClipが維持されること
 21. AnimationClip未設定でもImported Referenceを確認できること
 22. Managerが複数の場合に自動選択されないこと
-23. Manager選択中にPathのWaypoint番号と接続線がScene Viewへ表示されること
+23. Managerの選択状態にかかわらずPathのWaypoint番号と接続線がScene Viewへ表示されること
 24. Waypoint数0、1、2、3以上で規定どおりに接続線が描画されること
 25. 非アクティブなWaypointを含め、Runtimeと同じSibling Index順で表示されること
 26. `paths[]`に`null`が含まれてもEditor例外が発生しないこと
@@ -659,10 +667,15 @@ Assets
 31. LinkageAreaの目的地と移動線上の検査点が領域内に収まること
 32. LinkageArea外から最寄り頂点へ復帰できること
 33. 同じLinkageArea設定から決定論的な候補地点が得られること
+34. Managerの選択状態にかかわらずPathがScene Viewへ表示されること
+35. Waypoint Materialの`_BaseColor`または`_Color`がPath線へ反映されること
+36. Material Colorを取得できない場合にPath別Fallback Colorが使用されること
+37. 複数Pathの色をManager Inspectorから個別に設定できること
+38. Path描画物がRuntimeおよびVRChat Buildへ含まれないこと
 
 ## 20. 未実装・将来候補
 
-次は現行v0.1.2の正式仕様へ含めない。
+次は現行v0.1.3の正式仕様へ含めない。
 
 - NavMeshによるStatic障害物回避
 - NPC同士の衝突回避
@@ -671,7 +684,6 @@ Assets
 - Talk Animation専用State
 - 複数Idle Pattern
 - Dialogue UI自動生成
-- Manager専用Custom Inspector
 - Player探索のManager一括共有
 - 実機Profilerに基づく大規模NPC最適化
 

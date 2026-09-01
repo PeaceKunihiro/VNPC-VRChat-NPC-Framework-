@@ -5,7 +5,7 @@ using VNPC;
 
 public static class VNPC_PathGizmo
 {
-    [DrawGizmo(GizmoType.Selected)]
+    [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected)]
     private static void DrawManagerPaths(VNPC_Manager manager, GizmoType gizmoType)
     {
         if (manager == null || manager.paths == null) return;
@@ -17,7 +17,8 @@ public static class VNPC_PathGizmo
             if (path == null) continue;
 
             int pointCount = path.childCount;
-            Color pathColor = Color.HSVToRGB((pathIndex * 0.173f) % 1f, 0.75f, 1f);
+            Color pathColor = ResolvePathColor(manager, path, pathIndex);
+            pathColor.a = 1f;
             Handles.color = pathColor;
 
             for (int pointIndex = 0; pointIndex < pointCount; pointIndex++)
@@ -41,6 +42,29 @@ public static class VNPC_PathGizmo
             }
         }
         Handles.color = previousColor;
+    }
+
+    private static Color ResolvePathColor(VNPC_Manager manager, Transform path, int pathIndex)
+    {
+        Color fallback = Color.red;
+        if (manager.pathSceneColors != null && pathIndex < manager.pathSceneColors.Length)
+            fallback = manager.pathSceneColors[pathIndex];
+
+        bool useMaterial = manager.useWaypointMaterialColors == null ||
+                           pathIndex >= manager.useWaypointMaterialColors.Length ||
+                           manager.useWaypointMaterialColors[pathIndex];
+        if (!useMaterial) return fallback;
+
+        for (int pointIndex = 0; pointIndex < path.childCount; pointIndex++)
+        {
+            Renderer renderer = path.GetChild(pointIndex).GetComponent<Renderer>();
+            if (renderer == null) continue;
+            Material material = renderer.sharedMaterial;
+            if (material == null) continue;
+            if (material.HasProperty("_BaseColor")) return material.GetColor("_BaseColor");
+            if (material.HasProperty("_Color")) return material.GetColor("_Color");
+        }
+        return fallback;
     }
 
     private static void DrawConnection(Vector3 from, Vector3 to)
