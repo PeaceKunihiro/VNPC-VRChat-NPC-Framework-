@@ -1,6 +1,5 @@
 using UdonSharp;
 using UnityEngine;
-using UnityEngine.UI;
 using VRC.SDKBase;
 using VRC.Udon;
 
@@ -61,11 +60,10 @@ namespace VNPC
         [Range(0f, 1f)] public float lookWeight = 0.65f;
         [Range(0f, 60f)] public float maxLookYaw = 60f;
 
-        [Header("Dialogue UI (local only)")]
-        public GameObject dialoguePanel;
-        public Text dialogueText;
-        public Button[] choiceButtons;
-        public Text[] choiceLabels;
+        [Header("Dialogue")]
+        [Tooltip("Optional world-space position for the shared dialogue window.")]
+        public Transform dialogueAnchor;
+        public Vector3 dialogueOffset = new Vector3(0f, 2f, 0f);
         [TextArea] public string[] messages;
         public int[] messageChoiceStarts;
         public int[] messageChoiceCounts;
@@ -111,7 +109,6 @@ namespace VNPC
             areaOrigin = areaCenter != null ? areaCenter.position : transform.position;
             previousPosition = transform.position;
             communicationWasLocked = manager != null && manager.IsCharacterCommunicating(characterId);
-            if (dialoguePanel != null) dialoguePanel.SetActive(false);
             if (IsController()) RecalculateDestination(false);
             ScheduleNextPlayerScan();
         }
@@ -530,35 +527,17 @@ namespace VNPC
             currentMessage = -1;
             dialogueActive = false;
             dialogueRequestPending = false;
-            if (dialoguePanel != null) dialoguePanel.SetActive(false);
+            if (manager != null) manager.HideDialogue(this);
         }
 
         private void ShowMessage(int index)
         {
             if (index < 0 || messages == null || index >= messages.Length) { CloseDialogue(); return; }
             currentMessage = index;
-            if (dialoguePanel != null) dialoguePanel.SetActive(true);
-            if (dialogueText != null) dialogueText.text = messages[index];
-            int start = messageChoiceStarts != null && index < messageChoiceStarts.Length ? messageChoiceStarts[index] : 0;
-            int count = messageChoiceCounts != null && index < messageChoiceCounts.Length ? messageChoiceCounts[index] : 0;
-            for (int i = 0; choiceButtons != null && i < choiceButtons.Length; i++)
-            {
-                bool visible = i < count && start + i < (choiceTexts == null ? 0 : choiceTexts.Length);
-                if (choiceButtons[i] != null) choiceButtons[i].gameObject.SetActive(visible);
-                if (visible && choiceLabels != null && i < choiceLabels.Length && choiceLabels[i] != null) choiceLabels[i].text = choiceTexts[start + i];
-            }
+            if (manager != null) manager.ShowDialogue(this, index);
         }
 
-        public void SelectChoice0() { SelectChoice(0); }
-        public void SelectChoice1() { SelectChoice(1); }
-        public void SelectChoice2() { SelectChoice(2); }
-        public void SelectChoice3() { SelectChoice(3); }
-        public void SelectChoice4() { SelectChoice(4); }
-        public void SelectChoice5() { SelectChoice(5); }
-        public void SelectChoice6() { SelectChoice(6); }
-        public void SelectChoice7() { SelectChoice(7); }
-
-        private void SelectChoice(int localIndex)
+        public void SelectDialogueChoice(int localIndex)
         {
             if (!dialogueActive || currentMessage < 0) return;
             int start = messageChoiceStarts != null && currentMessage < messageChoiceStarts.Length ? messageChoiceStarts[currentMessage] : 0;
@@ -567,6 +546,11 @@ namespace VNPC
             ExecuteCommand(choice);
             int next = choiceNextMessages != null && choice < choiceNextMessages.Length ? choiceNextMessages[choice] : -1;
             ShowMessage(next);
+        }
+
+        public Vector3 GetDialoguePosition()
+        {
+            return dialogueAnchor != null ? dialogueAnchor.position : transform.position + dialogueOffset;
         }
 
         private void ExecuteCommand(int choice)

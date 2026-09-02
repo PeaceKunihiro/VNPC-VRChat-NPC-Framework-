@@ -3,11 +3,11 @@
 ## 1. 文書情報
 
 - Framework名：VNPC（VRChat NPC Framework）
-- 現行仕様Version：v0.1.3
+- 現行仕様Version：v0.1.5
 - 対象：VRChat Worlds SDK / UdonSharp
 - Unity：VRChatがサポートするUnity 2022.3系
 
-本書はv0.1.3で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
+本書はv0.1.5で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
 
 ## 2. 目的
 
@@ -49,7 +49,7 @@ NPC固有の次の処理を管理する。
 - PlayerFollow対象選択
 - Animator速度更新
 - LookAt
-- Local Dialogue UI
+- Character別Dialogueデータと表示位置
 - Choice Command
 - Managerへの会話・GlobalFlag操作要求
 
@@ -374,12 +374,21 @@ Run → Walk : Speed < midpoint - hysteresis
 
 ### 12.1 UIとデータ
 
-実装は`UnityEngine.UI`を使用する。
+全Characterで1つのローカルWorld Space Canvasを共有する。文字描画はUdonへ公開された`TMPro.TMP_Text`、選択操作は`UnityEngine.UI.Button`を使用する。
 
+Manager側：
+
+- `dialogueWindow : Transform`
 - `dialoguePanel : GameObject`
-- `dialogueText : Text`
+- `dialogueText : TMP_Text`
 - `choiceButtons : Button[]`
-- `choiceLabels : Text[]`
+- `choiceLabels : TMP_Text[]`
+- `dialogueFacingOffset : Vector3`
+
+Character側：
+
+- `dialogueAnchor : Transform`
+- `dialogueOffset : Vector3`
 - `messages : string[]`
 - `messageChoiceStarts : int[]`
 - `messageChoiceCounts : int[]`
@@ -388,7 +397,17 @@ Run → Walk : Speed < midpoint - hysteresis
 - `choiceCommands : int[]`
 - `choiceParameters : int[]`
 
-Choice ButtonのOnClickは同じCharacterの`SelectChoice0`～`SelectChoice7`へ接続する。
+Choice ButtonのOnClickはManagerの`SelectChoice0`～`SelectChoice7`へ接続し、Managerがローカルで会話中のCharacterへ転送する。
+
+- Dialogue UIは`UI > Text - TextMeshPro (VRC)`および`Button - TextMeshPro (VRC)`で作成したWorld Space Canvas構成を標準とする。
+- Dialogue Canvasには`VRCUiShape`と`GraphicRaycaster`を配置し、SceneにEventSystemを1つ用意する。
+- Dialogue CanvasのLayerは`UI`以外、Render ModeはWorld Spaceとする。
+- Dialogue TextとChoice LabelsにはCanvas用の`TextMeshProUGUI`を指定する。
+- Choice ButtonのNavigationはNoneとする。
+- VRC版TMPは通常のTMP ComponentをVRChat向けCanvas設定で生成するもので、独自のText Component型ではない。
+- Canvas、TMP文字列、選択肢表示、現在表示中Character参照は同期しない。
+- 会話成立時に`dialogueAnchor`、未設定時はCharacter座標と`dialogueOffset`から表示位置を決定する。
+- 会話成立時にLocal PlayerのHeadへ向け、その後は会話終了まで位置と回転を固定する。
 
 ### 12.2 会話開始
 
@@ -399,6 +418,7 @@ Choice ButtonのOnClickは同じCharacterの`SelectChoice0`～`SelectChoice7`へ
 - Manager OwnerはNetwork Event送信者を会話Playerとして検証する。
 - 対象Characterが未使用の場合だけPlayer IDを登録する。
 - 同じCharacterに対する2人目以降の要求は拒否する。
+- 同じPlayerが別Characterと会話中の場合、新しい要求を拒否する。
 - Local側は同期されたPlayer IDが自分と一致した後にMessage 0を表示する。
 - 要求確認Timeoutは3秒とする。
 
@@ -435,6 +455,8 @@ communicatingPlayerIds[index]
 - 通常の終了要求は現在の話者本人だけ受理する。
 - Manager Ownerは距離外、退出、無効参照、Timeoutを強制解除できる。
 - LocalのMessage Index、会話中状態、要求中状態を初期化する。
+- 共通Dialogue Panelを非表示にし、Dialogue Textと全Choice Labelを空文字へ初期化する。
+- 全Choice Buttonを非表示にし、ローカルの表示対象Character参照を解除する。
 - 実行済みGlobalFlagは初期化しない。
 
 ### 12.5 移動復帰
@@ -528,6 +550,12 @@ Inspector警告：
 - Manager未設定
 - Manager複数
 - `stopDistance > followDistance`
+- Dialogue PanelがWorld Space Canvas配下にない
+- Dialogue Canvasに`VRCUiShape`がない
+- Dialogue Canvasに`GraphicRaycaster`がない、またはLayerがUIになっている
+- SceneにEventSystemがない
+- Dialogue TextまたはChoice Labelが`TextMeshProUGUI`でない
+- Choice ButtonのNavigationがNoneでない
 
 ## 16. Portable Preset
 
@@ -541,7 +569,7 @@ Inspector警告：
 {
   "format": "VNPCCharacter",
   "formatVersion": 1,
-  "frameworkVersion": "0.1.3"
+  "frameworkVersion": "0.1.5"
 }
 ```
 
@@ -672,10 +700,13 @@ Assets
 36. Material Colorを取得できない場合にPath別Fallback Colorが使用されること
 37. 複数Pathの色をManager Inspectorから個別に設定できること
 38. Path描画物がRuntimeおよびVRChat Buildへ含まれないこと
+39. Dialogue TextとChoice LabelsへTextMeshProUGUIを指定できること
+40. TMP(VRC) CanvasとButton(VRC)の構成不備がInspectorへ警告されること
+41. TMPへ変更後もMessage表示とChoice Label更新がローカルで動作すること
 
 ## 20. 未実装・将来候補
 
-次は現行v0.1.3の正式仕様へ含めない。
+次は現行v0.1.5の正式仕様へ含めない。
 
 - NavMeshによるStatic障害物回避
 - NPC同士の衝突回避
@@ -698,6 +729,7 @@ Assets
 7. Player探索を毎Frame実行しない。
 8. DialogueのMessage進行とUIはPlayerごとのローカル状態とする。
 9. 同一Characterの会話相手は同時に1人とする。
-10. RuntimeからEditor APIとファイルI/Oを分離する。
-11. Preset ImportでScene依存参照を破壊しない。
-12. 利用者が内部Animator Parameterを手入力しなくても動作できるようにする。
+10. 同一Playerが同時に会話できるCharacterは1体とする。
+11. RuntimeからEditor APIとファイルI/Oを分離する。
+12. Preset ImportでScene依存参照を破壊しない。
+13. 利用者が内部Animator Parameterを手入力しなくても動作できるようにする。

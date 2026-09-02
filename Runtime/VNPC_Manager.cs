@@ -1,5 +1,7 @@
 using UdonSharp;
+using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 using VRC.SDK3.UdonNetworkCalling;
 using VRC.SDKBase;
 using VRC.Udon;
@@ -17,17 +19,29 @@ namespace VNPC
         [HideInInspector] public bool[] useWaypointMaterialColors = new bool[0];
         [Min(1f)] public float communicationTimeout = 120f;
 
+        [Header("Dialogue UI (local only)")]
+        [Tooltip("The root transform positioned near the speaking character. Usually the World Space Canvas transform.")]
+        public Transform dialogueWindow;
+        public GameObject dialoguePanel;
+        public TMP_Text dialogueText;
+        public Button[] choiceButtons;
+        public TMP_Text[] choiceLabels;
+        [Tooltip("Euler offset applied after facing the local player. World Space Canvas usually requires Y=180.")]
+        public Vector3 dialogueFacingOffset = new Vector3(0f, 180f, 0f);
+
         [UdonSynced, SerializeField] private int globalFlags;
         [UdonSynced, SerializeField] private int[] communicatingPlayerIds = new int[0];
 
         private float[] communicationStartedAt = new float[0];
         private float nextCommunicationValidation;
+        private VNPC_Character localDialogueCharacter;
 
         public int GlobalFlags => globalFlags;
 
         private void Start()
         {
             EnsureCommunicationArrays();
+            ClearDialogueUI();
             NotifyCharacters();
         }
 
@@ -109,6 +123,8 @@ namespace VNPC
             int index = FindCharacterIndex(characterId);
             VRCPlayerApi caller = NetworkCalling.CallingPlayer;
             if (index < 0 || !Utilities.IsValid(caller) || communicatingPlayerIds[index] >= 0) return;
+            for (int i = 0; i < communicatingPlayerIds.Length; i++)
+                if (communicatingPlayerIds[i] == caller.playerId) return;
             VNPC_Character character = characters[index];
             if (character == null || Vector3.Distance(character.transform.position, caller.GetPosition()) > character.stopDistance) return;
             communicatingPlayerIds[index] = caller.playerId;
@@ -200,6 +216,77 @@ namespace VNPC
             if (characters == null) return;
             for (int i = 0; i < characters.Length; i++)
                 if (characters[i] != null) characters[i].OnManagerStateChanged();
+        }
+
+        public void ShowDialogue(VNPC_Character character, int messageIndex)
+        {
+            VRCPlayerApi localPlayer = Networking.LocalPlayer;
+            if (character == null || !Utilities.IsValid(localPlayer)) return;
+            if (GetCommunicatingPlayerId(character.characterId) != localPlayer.playerId) return;
+            if (character.messages == null || messageIndex < 0 || messageIndex >= character.messages.Length) return;
+
+            if (localDialogueCharacter != character)
+            {
+                localDialogueCharacter = character;
+                PositionDialogueWindow(character, localPlayer);
+            }
+
+            if (dialogueText != null) dialogueText.text = character.messages[messageIndex];
+            int start = character.messageChoiceStarts != null && messageIndex < character.messageChoiceStarts.Length
+                ? character.messageChoiceStarts[messageIndex] : 0;
+            int count = character.messageChoiceCounts != null && messageIndex < character.messageChoiceCounts.Length
+                ? character.messageChoiceCounts[messageIndex] : 0;
+            for (int i = 0; choiceButtons != null && i < choiceButtons.Length; i++)
+            {
+                bool visible = i < count && start + i < (character.choiceTexts == null ? 0 : character.choiceTexts.Length);
+                if (choiceButtons[i] != null) choiceButtons[i].gameObject.SetActive(visible);
+                if (choiceLabels != null && i < choiceLabels.Length && choiceLabels[i] != null)
+                    choiceLabels[i].text = visible ? character.choiceTexts[start + i] : "";
+            }
+            if (dialoguePanel != null) dialoguePanel.SetActive(true);
+        }
+
+        public void HideDialogue(VNPC_Character character)
+        {
+            if (character != null && localDialogueCharacter != character) return;
+            localDialogueCharacter = null;
+            ClearDialogueUI();
+        }
+
+        private void PositionDialogueWindow(VNPC_Character character, VRCPlayerApi localPlayer)
+        {
+            Transform window = dialogueWindow != null ? dialogueWindow : dialoguePanel == null ? null : dialoguePanel.transform;
+            if (window == null) return;
+            Vector3 position = character.GetDialoguePosition();
+            window.position = position;
+            Vector3 headPosition = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).position;
+            Vector3 direction = headPosition - position;
+            if (direction.sqrMagnitude > 0.0001f)
+                window.rotation = Quaternion.LookRotation(direction.normalized, Vector3.up) * Quaternion.Euler(dialogueFacingOffset);
+        }
+
+        private void ClearDialogueUI()
+        {
+            if (dialogueText != null) dialogueText.text = "";
+            for (int i = 0; choiceButtons != null && i < choiceButtons.Length; i++)
+                if (choiceButtons[i] != null) choiceButtons[i].gameObject.SetActive(false);
+            for (int i = 0; choiceLabels != null && i < choiceLabels.Length; i++)
+                if (choiceLabels[i] != null) choiceLabels[i].text = "";
+            if (dialoguePanel != null) dialoguePanel.SetActive(false);
+        }
+
+        public void SelectChoice0() { SelectChoice(0); }
+        public void SelectChoice1() { SelectChoice(1); }
+        public void SelectChoice2() { SelectChoice(2); }
+        public void SelectChoice3() { SelectChoice(3); }
+        public void SelectChoice4() { SelectChoice(4); }
+        public void SelectChoice5() { SelectChoice(5); }
+        public void SelectChoice6() { SelectChoice(6); }
+        public void SelectChoice7() { SelectChoice(7); }
+
+        private void SelectChoice(int index)
+        {
+            if (localDialogueCharacter != null) localDialogueCharacter.SelectDialogueChoice(index);
         }
 
         public int GetPathPointCount(int pathId)

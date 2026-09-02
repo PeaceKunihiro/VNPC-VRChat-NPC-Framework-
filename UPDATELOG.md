@@ -1,5 +1,43 @@
 # VNPC Update Log
 
+## v0.1.5
+
+### Shared Dialogue UI
+
+- CharacterごとのDialogue UI参照を廃止し、Managerで単一のWorld Space Canvas、TMP、Choice Buttonを共有する構成へ変更しました。
+- Characterには表示位置調整用のDialogue Anchorと、未指定時に使用するDialogue Offsetを追加しました。
+- 会話成立時に共通Canvasを対象Character付近へ配置し、Local PlayerのHeadへ向けた後、会話終了まで位置と回転を固定します。
+- 共通Canvasの表示、文章、選択肢、表示対象Characterはローカル状態とし、ネットワーク同期しません。
+- Choice Buttonの送信先をManagerへ集約し、現在ローカルで会話中のCharacterへ選択番号を転送します。
+- 会話終了時にDialogue TextとChoice Labelを空文字へ戻し、全Choice ButtonとDialogue Panelを非表示にします。
+- 同一Playerが複数Characterと同時に会話しないよう、Manager Owner側で2件目以降の会話要求を拒否します。
+- 共通Dialogue UIの構成警告をCharacter InspectorからManager Inspectorへ移動しました。
+
+既存Sceneでは、Dialogue UI参照と各ButtonのOnClick送信先をVNPC_Managerへ再設定してください。
+
+## v0.1.4
+
+### Dialogue UI
+
+- Dialogue TextをLegacy `UnityEngine.UI.Text`から`TMPro.TMP_Text`へ変更しました。
+- Choice LabelsをLegacy `Text[]`から`TMP_Text[]`へ変更しました。
+- Choice ButtonsはVRC版でも共通の`UnityEngine.UI.Button[]`を継続使用します。
+- `UI > Text - TextMeshPro (VRC)`と`Button - TextMeshPro (VRC)`で作成したWorld Space Canvas構成を標準としました。
+- Message本文とChoice Labelの更新処理をTMPの`text` Propertyへ対応させました。
+- Custom Inspectorで重複していたDialogue UI見出しを1つに修正しました。
+
+### Dialogue UI Validation
+
+- Dialogue PanelがCanvas配下にない場合の警告を追加しました。
+- CanvasがWorld Spaceでない場合の警告を追加しました。
+- Canvasに`VRCUiShape`がない場合の警告を追加しました。
+- Canvasに`GraphicRaycaster`がない場合、またはLayerがUIの場合の警告を追加しました。
+- SceneにEventSystemがない場合の警告を追加しました。
+- Dialogue TextまたはChoice LabelがCanvas用`TextMeshProUGUI`でない場合の警告を追加しました。
+- Choice ButtonのNavigationがNoneでない場合の警告を追加しました。
+
+Legacy TextからTMPへの型変更により、既存SceneのDialogue TextとChoice Labels参照は再設定が必要です。
+
 ## v0.1.3
 
 ### Path Scene View

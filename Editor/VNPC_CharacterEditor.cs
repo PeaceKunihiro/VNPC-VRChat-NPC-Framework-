@@ -3,7 +3,6 @@ using UdonSharpEditor;
 using UnityEditor;
 using UnityEngine;
 using VNPC;
-using VRC.SDK3.Components;
 
 [CustomEditor(typeof(VNPC_Character))]
 public class VNPC_CharacterEditor : Editor
@@ -41,7 +40,6 @@ public class VNPC_CharacterEditor : Editor
             EditorGUILayout.HelpBox("Stop DistanceがFollow Distanceより大きいため、NPCはFollow Distanceまで接近できません。", MessageType.Info);
         if (character.moveStyle == VNPCMoveStyle.LinkageArea && !character.IsLinkageAreaValid())
             EditorGUILayout.HelpBox("Linkage Areaには、自己交差しない3頂点以上の有効なXZ多角形を指定してください。", MessageType.Warning);
-
         serializedObject.Update();
         EditorGUILayout.LabelField("General", EditorStyles.boldLabel);
         DrawProperty("manager");
@@ -101,14 +99,12 @@ public class VNPC_CharacterEditor : Editor
             DrawProperty("lookDistance");
             DrawProperty("lookWeight");
             DrawProperty("maxLookYaw");
+            DrawProperty("dialogueAnchor");
+            DrawProperty("dialogueOffset");
             EditorGUI.indentLevel--;
         }
 
-        EditorGUILayout.LabelField("Dialogue UI (local only)", EditorStyles.boldLabel);
-        DrawProperty("dialoguePanel");
-        DrawProperty("dialogueText");
-        DrawProperty("choiceButtons");
-        DrawProperty("choiceLabels");
+        EditorGUILayout.LabelField("Dialogue", EditorStyles.boldLabel);
         DrawProperty("messages");
         DrawProperty("messageChoiceStarts");
         DrawProperty("messageChoiceCounts");
