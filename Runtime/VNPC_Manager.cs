@@ -20,10 +20,10 @@ namespace VNPC
         [Min(1f)] public float communicationTimeout = 120f;
 
         [Header("Dialogue UI (local only)")]
-        [Tooltip("The root transform positioned near the speaking character. Usually the World Space Canvas transform.")]
+        [Tooltip("The generated World Space Canvas root positioned near the speaking character.")]
         public Transform dialogueWindow;
-        public GameObject dialoguePanel;
         public TMP_Text dialogueText;
+        public ScrollRect dialogueScrollRect;
         public Button[] choiceButtons;
         public TMP_Text[] choiceLabels;
         [Tooltip("Euler offset applied after facing the local player. World Space Canvas usually requires Y=180.")]
@@ -232,6 +232,7 @@ namespace VNPC
             }
 
             if (dialogueText != null) dialogueText.text = character.messages[messageIndex];
+            if (dialogueScrollRect != null) dialogueScrollRect.verticalNormalizedPosition = 1f;
             int start = character.messageChoiceStarts != null && messageIndex < character.messageChoiceStarts.Length
                 ? character.messageChoiceStarts[messageIndex] : 0;
             int count = character.messageChoiceCounts != null && messageIndex < character.messageChoiceCounts.Length
@@ -243,7 +244,7 @@ namespace VNPC
                 if (choiceLabels != null && i < choiceLabels.Length && choiceLabels[i] != null)
                     choiceLabels[i].text = visible ? character.choiceTexts[start + i] : "";
             }
-            if (dialoguePanel != null) dialoguePanel.SetActive(true);
+            if (dialogueWindow != null) dialogueWindow.gameObject.SetActive(true);
         }
 
         public void HideDialogue(VNPC_Character character)
@@ -255,7 +256,7 @@ namespace VNPC
 
         private void PositionDialogueWindow(VNPC_Character character, VRCPlayerApi localPlayer)
         {
-            Transform window = dialogueWindow != null ? dialogueWindow : dialoguePanel == null ? null : dialoguePanel.transform;
+            Transform window = dialogueWindow;
             if (window == null) return;
             Vector3 position = character.GetDialoguePosition();
             window.position = position;
@@ -272,7 +273,8 @@ namespace VNPC
                 if (choiceButtons[i] != null) choiceButtons[i].gameObject.SetActive(false);
             for (int i = 0; choiceLabels != null && i < choiceLabels.Length; i++)
                 if (choiceLabels[i] != null) choiceLabels[i].text = "";
-            if (dialoguePanel != null) dialoguePanel.SetActive(false);
+            if (dialogueScrollRect != null) dialogueScrollRect.verticalNormalizedPosition = 1f;
+            if (dialogueWindow != null) dialogueWindow.gameObject.SetActive(false);
         }
 
         public void SelectChoice0() { SelectChoice(0); }
