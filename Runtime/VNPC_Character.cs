@@ -61,7 +61,7 @@ namespace VNPC
         [Range(0f, 60f)] public float maxLookYaw = 60f;
 
         [Header("Dialogue")]
-        [Tooltip("Optional world-space position for the shared dialogue window.")]
+        [Tooltip("Optional origin for the shared dialogue window. Dialogue Offset is applied in this transform's local space.")]
         public Transform dialogueAnchor;
         public Vector3 dialogueOffset = new Vector3(0f, 2f, 0f);
         [TextArea] public string[] messages;
@@ -550,7 +550,7 @@ namespace VNPC
 
         public Vector3 GetDialoguePosition()
         {
-            return dialogueAnchor != null ? dialogueAnchor.position : transform.position + dialogueOffset;
+            return dialogueAnchor != null ? dialogueAnchor.TransformPoint(dialogueOffset) : transform.position + dialogueOffset;
         }
 
         private void ExecuteCommand(int choice)

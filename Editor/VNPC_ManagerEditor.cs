@@ -8,6 +8,7 @@ using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using VNPC;
 using VRC.SDK3.Components;
+using VRC.Udon;
 
 [CustomEditor(typeof(VNPC_Manager))]
 public class VNPC_ManagerEditor : Editor
@@ -60,6 +61,8 @@ public class VNPC_ManagerEditor : Editor
             if (GUILayout.Button("Create Shared Dialogue UI")) CreateSharedDialogueUI(manager);
         if (manager.dialogueWindow != null)
             EditorGUILayout.HelpBox("既存UIを保持するため自動生成を無効にしています。再生成する場合はDialogue Window参照を解除してから実行してください。", MessageType.Info);
+        if (manager.choiceButtons != null && manager.choiceButtons.Length > 0 && GUILayout.Button("Repair Dialogue UI Events"))
+            RepairDialogueUIEvents(manager);
     }
 
     private static void DrawDialogueWarnings(VNPC_Manager manager)
@@ -113,7 +116,7 @@ public class VNPC_ManagerEditor : Editor
         Undo.AddComponent<VRCUiShape>(root);
         RectTransform rootRect = root.GetComponent<RectTransform>();
         rootRect.sizeDelta = new Vector2(DialogueWidth, DialogueHeight + 420f);
-        rootRect.localScale = Vector3.one * 0.002f;
+        rootRect.localScale = Vector3.one * 0.001f;
 
         GameObject messageArea = CreateUIObject("MessageArea", root.transform);
         RectTransform messageRect = messageArea.GetComponent<RectTransform>();
@@ -275,14 +278,33 @@ public class VNPC_ManagerEditor : Editor
 
     private static void AddChoiceListener(Button button, VNPC_Manager manager, int index)
     {
-        if (index == 0) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice0);
-        else if (index == 1) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice1);
-        else if (index == 2) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice2);
-        else if (index == 3) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice3);
-        else if (index == 4) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice4);
-        else if (index == 5) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice5);
-        else if (index == 6) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice6);
-        else if (index == 7) UnityEventTools.AddPersistentListener(button.onClick, manager.SelectChoice7);
+        UdonBehaviour backing = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+        if (backing == null) return;
+        UnityEventTools.AddStringPersistentListener(button.onClick, backing.SendCustomEvent, "SelectChoice" + index);
+        EditorUtility.SetDirty(button);
+    }
+
+    private static void RepairDialogueUIEvents(VNPC_Manager manager)
+    {
+        UdonBehaviour backing = UdonSharpEditorUtility.GetBackingUdonBehaviour(manager);
+        if (backing == null) return;
+        Undo.RecordObject(manager, "Repair VNPC Dialogue UI Events");
+        for (int i = 0; manager.choiceButtons != null && i < manager.choiceButtons.Length && i < ChoiceButtonCount; i++)
+        {
+            Button button = manager.choiceButtons[i];
+            if (button == null) continue;
+            Undo.RecordObject(button, "Repair VNPC Dialogue UI Event");
+            for (int eventIndex = button.onClick.GetPersistentEventCount() - 1; eventIndex >= 0; eventIndex--)
+            {
+                Object eventTarget = button.onClick.GetPersistentTarget(eventIndex);
+                string methodName = button.onClick.GetPersistentMethodName(eventIndex);
+                if ((eventTarget == manager || eventTarget == backing) &&
+                    (methodName == "SelectChoice" + i || methodName == "SendCustomEvent"))
+                    UnityEventTools.RemovePersistentListener(button.onClick, eventIndex);
+            }
+            UnityEventTools.AddStringPersistentListener(button.onClick, backing.SendCustomEvent, "SelectChoice" + i);
+            EditorUtility.SetDirty(button);
+        }
     }
 
     private static void EnsureVisualizationArraySizes(int pathCount, SerializedProperty colors, SerializedProperty materialModes)

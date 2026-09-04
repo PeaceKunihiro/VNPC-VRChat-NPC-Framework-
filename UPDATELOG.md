@@ -1,5 +1,37 @@
 # VNPC Update Log
 
+## v0.1.6
+
+### Shared Dialogue UI Generator
+
+- `VNPC_Manager` Inspectorから、全Characterで共有するDialogue UIを自動生成できるようにしました。
+- World Space Canvas、`VRCUiShape`、`GraphicRaycaster`、TMP本文、選択肢Button、EventSystemを必要に応じてまとめて構成します。
+- 個別のDialogue Panel参照を廃止し、生成したDialogue Windowを表示・非表示の単位として扱うようにしました。
+- 本文表示領域に背景色とOutlineを設定し、独立したPanelオブジェクトを必須としない構成へ変更しました。
+- 本文領域を英数20文字相当×3行の初期表示サイズとし、長文では縦Scrollbarを使用できるようにしました。
+- メッセージ切り替え時と会話終了時にScroll位置を先頭へ戻します。
+- キャラクター前方での使用を想定し、自動生成するDialogue Windowの初期Scaleを従来の半分に変更しました。
+
+### Dialogue Position Preview
+
+- `VNPC_Character` InspectorへEditor専用のDialogue Windowプレビューを追加しました。
+- 共通Dialogue Windowを複製して対象Character付近へ表示し、最初のMessageをScene View上で確認できます。
+- プレビューはSceneとBuildへ保存せず、Play Modeへも持ち込みません。
+- Scene ViewのPosition HandleからCharacter別の表示位置を調整できるようにしました。
+- Character直下へDialogue Anchorを作成して自動割り当てする操作を追加しました。
+- Dialogue Anchor指定時は、`dialogueOffset`をAnchorのローカル座標として適用するように変更しました。
+
+### VRC UI Event Compatibility
+
+- Choice ButtonのOnClickがUdonSharp Proxyを直接参照しないよう、ManagerのBacking `UdonBehaviour.SendCustomEvent`へ接続する方式へ変更しました。
+- VRChat SDKのUnityEventFilterによって`SelectChoice0`～`SelectChoice7`が削除される問題へ対応しました。
+- 既存Dialogue UIのイベントをBacking UdonBehaviour方式へ再設定する`Repair Dialogue UI Events`をManager Inspectorへ追加しました。
+- 修復時はVNPCが設定した旧Listenerだけを除去し、それ以外のユーザー設定Listenerを維持します。
+
+### Validation
+
+- VNPCを再導入して参照とNetwork IDを再生成した環境で、Unity内テストとVRChat SDK Build & Testの巡回・Interaction動作を確認しました。
+
 ## v0.1.5
 
 ### Shared Dialogue UI
