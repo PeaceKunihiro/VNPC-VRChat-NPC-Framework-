@@ -70,7 +70,7 @@ public class VNPC_ManagerEditor : Editor
             return;
         }
 
-        Canvas canvas = manager.dialogueWindow.GetComponentInParent<Canvas>();
+        Canvas canvas = manager.dialogueWindow.GetComponentInParent<Canvas>(true);
         if (canvas == null)
             EditorGUILayout.HelpBox("Dialogue WindowはVRC用World Space Canvasにしてください。", MessageType.Warning);
         else
