@@ -3,11 +3,11 @@
 ## 1. 文書情報
 
 - Framework名：VNPC（VRChat NPC Framework）
-- 現行仕様Version：v0.1.5
+- 現行仕様Version：v0.1.6
 - 対象：VRChat Worlds SDK / UdonSharp
 - Unity：VRChatがサポートするUnity 2022.3系
 
-本書はv0.1.5で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
+本書はv0.1.6で実装するRuntimeおよびEditor仕様を定義する。将来候補は「未実装」に明記し、正式仕様とは区別する。
 
 ## 2. 目的
 
@@ -21,7 +21,9 @@
 - Idle／Walk／Run Animation
 - Local Playerへの視線追従
 - Player近接時の移動停止
+- LinkageArea内の決定論的な巡回
 - 選択肢ベースの会話
+- 全Character共通Dialogue UIの自動生成と位置プレビュー
 - 会話中の単一話者ロック
 - GlobalFlagのネットワーク同期
 - Character設定の`.vnpc` Export／Import
@@ -379,8 +381,8 @@ Run → Walk : Speed < midpoint - hysteresis
 Manager側：
 
 - `dialogueWindow : Transform`
-- `dialoguePanel : GameObject`
 - `dialogueText : TMP_Text`
+- `dialogueScrollRect : ScrollRect`
 - `choiceButtons : Button[]`
 - `choiceLabels : TMP_Text[]`
 - `dialogueFacingOffset : Vector3`
@@ -397,17 +399,25 @@ Character側：
 - `choiceCommands : int[]`
 - `choiceParameters : int[]`
 
-Choice ButtonのOnClickはManagerの`SelectChoice0`～`SelectChoice7`へ接続し、Managerがローカルで会話中のCharacterへ転送する。
+Choice ButtonのOnClickはManagerのBacking `UdonBehaviour.SendCustomEvent`へ接続し、`SelectChoice0`～`SelectChoice7`を送信する。Managerは受け取った選択番号をローカルで会話中のCharacterへ転送する。UdonSharp ProxyをOnClickの送信先へ直接指定しない。
 
-- Dialogue UIは`UI > Text - TextMeshPro (VRC)`および`Button - TextMeshPro (VRC)`で作成したWorld Space Canvas構成を標準とする。
+- Manager Inspectorの`Create Shared Dialogue UI`から、共通Dialogue UIをEditor上で自動生成できる。
+- 自動生成対象はWorld Space Canvas、`VRCUiShape`、`GraphicRaycaster`、TMP本文、本文背景、Outline、ScrollRect、縦Scrollbar、Choice Button最大8個および必要時のEventSystemとする。
+- 本文の初期表示領域は英数20文字相当×3行とし、表示領域を超える長文では縦Scrollbarを使用する。
+- 本文の背景色と縁取りはMessage AreaのImageおよびOutlineで構成し、個別のDialogue Panel参照を要求しない。
+- 自動生成するDialogue Windowの初期Scaleは`0.001`とする。
+- 既存のDialogue Windowが割り当てられている場合は自動生成せず、既存UIを維持する。
+- 手動構成する場合は`UI > Text - TextMeshPro (VRC)`および`Button - TextMeshPro (VRC)`で作成したWorld Space Canvas構成を標準とする。
 - Dialogue Canvasには`VRCUiShape`と`GraphicRaycaster`を配置し、SceneにEventSystemを1つ用意する。
 - Dialogue CanvasのLayerは`UI`以外、Render ModeはWorld Spaceとする。
 - Dialogue TextとChoice LabelsにはCanvas用の`TextMeshProUGUI`を指定する。
 - Choice ButtonのNavigationはNoneとする。
 - VRC版TMPは通常のTMP ComponentをVRChat向けCanvas設定で生成するもので、独自のText Component型ではない。
 - Canvas、TMP文字列、選択肢表示、現在表示中Character参照は同期しない。
-- 会話成立時に`dialogueAnchor`、未設定時はCharacter座標と`dialogueOffset`から表示位置を決定する。
+- `dialogueAnchor`指定時はAnchor Transformを基準として`dialogueOffset`をローカル座標で適用する。
+- `dialogueAnchor`未指定時はCharacter座標へ`dialogueOffset`をワールド座標差分として加算する。
 - 会話成立時にLocal PlayerのHeadへ向け、その後は会話終了まで位置と回転を固定する。
+- Message切り替え時はScrollRectを先頭へ戻す。
 
 ### 12.2 会話開始
 
@@ -455,8 +465,9 @@ communicatingPlayerIds[index]
 - 通常の終了要求は現在の話者本人だけ受理する。
 - Manager Ownerは距離外、退出、無効参照、Timeoutを強制解除できる。
 - LocalのMessage Index、会話中状態、要求中状態を初期化する。
-- 共通Dialogue Panelを非表示にし、Dialogue Textと全Choice Labelを空文字へ初期化する。
+- 共通Dialogue Windowを非表示にし、Dialogue Textと全Choice Labelを空文字へ初期化する。
 - 全Choice Buttonを非表示にし、ローカルの表示対象Character参照を解除する。
+- ScrollRectを先頭へ戻す。
 - 実行済みGlobalFlagは初期化しない。
 
 ### 12.5 移動復帰
@@ -537,12 +548,18 @@ Auto Setup対象：
 - 明示ManagerへのCharacter登録
 - 重複Character IDの補正
 
+Manager Inspectorの作成支援対象：
+
+- 全Character共通Dialogue UI
+- Dialogue Window、TMP本文、ScrollRect、Choice Button、Choice LabelのManagerへの割り当て
+- Sceneに存在しない場合のEventSystem
+- 既存Choice ButtonのBacking UdonBehaviour方式へのイベント修復
+
 Auto Setup対象外：
 
 - NavMeshAgent
 - Trigger Collider
 - 複数Managerからの自動選択
-- Dialogue UIの自動生成
 
 Inspector警告：
 
@@ -550,7 +567,7 @@ Inspector警告：
 - Manager未設定
 - Manager複数
 - `stopDistance > followDistance`
-- Dialogue PanelがWorld Space Canvas配下にない
+- Dialogue WindowがWorld Space Canvasでない
 - Dialogue Canvasに`VRCUiShape`がない
 - Dialogue Canvasに`GraphicRaycaster`がない、またはLayerがUIになっている
 - SceneにEventSystemがない
@@ -598,7 +615,7 @@ Inspector警告：
 - Path ID
 - Area Center
 - Linkage Area
-- Dialogue Panel、Text、Button
+- Dialogue Window、Text、ScrollRect、Button
 - Command Object
 - Animator Controller
 - AnimationClip Object参照
@@ -657,8 +674,9 @@ Assets
 6. 移動設定と安全なWaypoint／Areaを設定する。
 7. Idle／Walk／Run AnimationClipを設定する。
 8. `Generate / Rebuild Animator`を実行する。
-9. 必要に応じてDialogue UIとButton Eventを設定する。
-10. VRChatのBuild & TestでOwner／Remote動作を確認する。
+9. 必要に応じてManager Inspectorから共通Dialogue UIを生成する。既存UIを使用する場合は参照を設定し、必要に応じて`Repair Dialogue UI Events`を実行する。
+10. 必要に応じてCharacter InspectorでDialogue Anchorを作成し、Scene Viewのプレビューから表示位置を調整する。
+11. VRChatのBuild & TestでOwner／Remote動作を確認する。
 
 ## 19. 検証項目
 
@@ -703,10 +721,18 @@ Assets
 39. Dialogue TextとChoice LabelsへTextMeshProUGUIを指定できること
 40. TMP(VRC) CanvasとButton(VRC)の構成不備がInspectorへ警告されること
 41. TMPへ変更後もMessage表示とChoice Label更新がローカルで動作すること
+42. Manager Inspectorから共通Dialogue UIを生成し、必要な参照が自動設定されること
+43. 3行を超える本文で縦Scrollbarを使用でき、Message切り替えと会話終了時に先頭へ戻ること
+44. Dialogue Windowの背景とOutlineが表示され、個別Dialogue Panel参照を必要としないこと
+45. Choice ButtonのOnClickがBacking UdonBehaviour経由で動作し、VRChat SDKのUnityEventFilterで削除されないこと
+46. `Repair Dialogue UI Events`が旧VNPC Listenerを修復し、無関係なListenerを維持すること
+47. Dialogue Anchor指定時にOffsetがAnchorのローカル座標として適用されること
+48. Character InspectorでDialogue Windowをプレビューし、位置調整できること
+49. Dialogueプレビュー用ObjectがSceneおよびVRChat Buildへ保存されないこと
 
 ## 20. 未実装・将来候補
 
-次は現行v0.1.5の正式仕様へ含めない。
+次は現行v0.1.6の正式仕様へ含めない。
 
 - NavMeshによるStatic障害物回避
 - NPC同士の衝突回避
@@ -714,7 +740,6 @@ Assets
 - Reaction Animation専用設定
 - Talk Animation専用State
 - 複数Idle Pattern
-- Dialogue UI自動生成
 - Player探索のManager一括共有
 - 実機Profilerに基づく大規模NPC最適化
 
