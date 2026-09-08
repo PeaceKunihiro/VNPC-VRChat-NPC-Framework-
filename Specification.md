@@ -99,6 +99,74 @@ NPC
 - `OnDeserialization`でCharacterへManager状態の変更を通知する。
 - VRCObjectSyncによるCharacter Transformも通常の同期結果を使用する。
 
+### 5.4 Character Ownership移行時のMoveState再構築（実装予定）
+
+#### 5.4.1 基本方針
+
+- CharacterのOwnershipがLocal Playerへ移行した時、新OwnerはVRCObjectSyncが反映した現在の`transform.position`と`transform.rotation`を起点として移動経路を再構築する。
+- Character位置、回転および目的地を独自のSynced Variableとして同期しない。
+- Remote側は移動AIとTransform操作を実行しないが、Animation速度測定に使用しているTransform差分から、最後に正常と判定した水平移動方向と移動時刻をローカルに保持する。
+- 移動方向の測定ではAnimation速度測定と同じ異常値基準を使用し、VRCObjectSyncの大きな補正またはTeleportに相当する差分を経路判定へ使用しない。
+- `OnOwnershipTransferred`は全Clientで受信するが、MoveStateを再構築するのは移行後にCharacter OwnerとなったClientだけとする。
+- Ownership移行を検出してから再構築が完了するまで、古い`destination`による`UpdateMovement`を実行しない。
+
+#### 5.4.2 破棄するローカル状態
+
+新Ownerは、Remote期間中に更新されなかった可能性がある次の状態をそのまま使用しない。
+
+- `destination`
+- `hasDestination`
+- `pointIndex`
+- `areaIndex`
+- `waiting`
+- `waitUntil`
+- `followPlayerId`
+
+Ownership移行時は速度計算用の`previousPosition`を現在位置へ合わせ、`smoothedSpeed`を0へ初期化する。
+
+#### 5.4.3 PathLoop
+
+- `startIndex`、正規化した`step`およびWaypoint数から、実際に巡回する有向区間列を再生成する。
+- 現在位置から各有向区間への最短距離を求め、最も近い区間の終点を次のWaypointとする。
+- 複数区間が同距離の場合、最後に正常と判定した水平移動方向との内積が最も大きい区間を優先する。
+- 有効な移動方向がない場合はCharacterの前方向との内積を使用し、それでも同順位なら巡回順が最も早い区間を使用する。
+- 現在位置がWaypointの`arrivalDistance`以内の場合は到着済みとみなし、Ownership移行時点から`waitTime`の待機を開始した後、`step`方向の次Waypointへ進む。
+- Waypointが0個の場合は移動せず、1個の場合はそのWaypointだけを目的地として扱う。
+
+#### 5.4.4 PointArea
+
+- `areaCenter`、`areaRadius`および`areaDirectionCount`から固定候補点を再生成する。
+- `step`に従う有向区間列を生成し、PathLoopと同じ距離、移動方向、前方向の優先規則で現在区間と次候補を決定する。
+- 現在位置が候補点の`arrivalDistance`以内の場合は到着済みとみなし、`waitTime`の待機後に次候補へ進む。
+
+#### 5.4.5 PlayerFollow
+
+- 過去の`followPlayerId`を破棄する。
+- Ownership取得後にPlayer探索を即時実行し、通常の距離、角度および同順位規則から追従対象を選び直す。
+- 候補がない場合または最上位候補が同順位の場合は移動しない。
+
+#### 5.4.6 LinkageArea
+
+- 現在位置がLinkageArea外の場合は、通常処理と同じく最寄り頂点を目的地として領域内へ復帰する。
+- 現在位置が領域内の場合は、同じLinkageArea頂点とHalton候補生成式から有効候補を再生成し、現在位置から線分全体が領域内となる新しい目的地を選択する。
+- 最後に正常と判定した水平移動方向がある場合は、その方向に最も近い有効候補を優先する。有効な方向がない場合および同順位の場合は候補Indexで決定論的に選択する。
+- 以前のOwnerが選択していた候補地点および`areaIndex`の完全一致は保証せず、安全な領域内移動の継続を保証対象とする。
+- 有効候補がない場合は既定の再試行待機へ移行する。
+
+#### 5.4.7 会話・停止状態
+
+- Managerの会話ロック中にOwnershipが移行した場合は、Characterの移動を停止したままにする。
+- 会話ロック解除時に、その時点のTransformからMoveStyle別の再構築を実行する。
+- Player近接停止中でも経路は再構築できるが、Playerが`stopDistance`外へ出るまでTransform操作を開始しない。
+- Transformだけでは以前のOwnerの待機残時間を復元できないため、到着点にいる場合はOwnership移行時点から`waitTime`を再開始する。
+
+#### 5.4.8 再構築の前提と非対象
+
+- Sceneで設定されたPath、Area、`startIndex`、`step`および各種移動設定が全Clientで同一であることを前提とする。
+- 実行時に変更されたMoveStyleはTransformだけから判別できない。`ChangeMoveStyle`を使用する場合は、Character Ownerだけのローカル変更にせず、Ownership移行後も全Clientが同じMoveStyleを取得できる別の状態管理を必要とする。
+- GlobalFlagと会話ロックはManagerのSynced Variableを引き続き使用し、CharacterのMoveState再構築対象には含めない。
+- 再構築は以前のOwnerの内部状態を完全複製する処理ではなく、同期済み現在位置から不自然な逆走や開始地点への復帰を避けて有効な移動を再開する処理とする。
+
 ## 6. GlobalFlag
 
 - GlobalFlagはManagerの`int`を使用するbit flagとする。
@@ -729,6 +797,16 @@ Assets
 47. Dialogue Anchor指定時にOffsetがAnchorのローカル座標として適用されること
 48. Character InspectorでDialogue Windowをプレビューし、位置調整できること
 49. Dialogueプレビュー用ObjectがSceneおよびVRChat Buildへ保存されないこと
+50. Ownership移行後に旧Ownerのローカル`destination`を使用して移動しないこと
+51. PathLoopの途中でOwnershipが移行しても、開始Waypointへ逆走せず現在区間から巡回を継続すること
+52. PathLoopおよびPointAreaの到着点でOwnershipが移行した場合、`waitTime`経過後に次の候補へ進むこと
+53. PointAreaの途中でOwnershipが移行しても、現在位置に最も近い有向区間から巡回を継続すること
+54. PlayerFollow中のOwnership移行後に追従対象が即時再選択されること
+55. LinkageArea内のOwnership移行後に、領域外を横切らない新しい目的地が選択されること
+56. LinkageArea外でOwnershipが移行した場合に最寄り頂点へ復帰すること
+57. 会話中のOwnership移行では移動せず、会話解除後の現在位置から経路を再構築すること
+58. 異常なTransform差分をOwnership移行時の進行方向判定へ使用しないこと
+59. 2Client以上のBuild & TestでOwner退出およびOwnership再移譲後も移動が継続すること
 
 ## 20. 未実装・将来候補
 
@@ -742,6 +820,7 @@ Assets
 - 複数Idle Pattern
 - Player探索のManager一括共有
 - 実機Profilerに基づく大規模NPC最適化
+- Character Ownership移行時のMoveState再構築（5.4の確定仕様。Runtime未実装）
 
 ## 21. 設計原則
 
@@ -758,3 +837,4 @@ Assets
 11. RuntimeからEditor APIとファイルI/Oを分離する。
 12. Preset ImportでScene依存参照を破壊しない。
 13. 利用者が内部Animator Parameterを手入力しなくても動作できるようにする。
+14. Character Ownership取得時はVRCObjectSyncが反映した現在TransformからMoveStateを再構築し、Transform同期を重複実装しない。
