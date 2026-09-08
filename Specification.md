@@ -99,7 +99,7 @@ NPC
 - `OnDeserialization`でCharacterへManager状態の変更を通知する。
 - VRCObjectSyncによるCharacter Transformも通常の同期結果を使用する。
 
-### 5.4 Character Ownership移行時のMoveState再構築（実装予定）
+### 5.4 Character Ownership移行時のMoveState再構築
 
 #### 5.4.1 基本方針
 
@@ -820,7 +820,6 @@ Assets
 - 複数Idle Pattern
 - Player探索のManager一括共有
 - 実機Profilerに基づく大規模NPC最適化
-- Character Ownership移行時のMoveState再構築（5.4の確定仕様。Runtime未実装）
 
 ## 21. 設計原則
 

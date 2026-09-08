@@ -77,6 +77,8 @@ namespace VNPC
         private const float DistanceTieEpsilon = 0.05f;
         private const float AngleTieEpsilon = 3f;
         private const float DialogueRequestTimeout = 3f;
+        private const float RouteDistanceTieEpsilon = 0.0001f;
+        private const float RouteDirectionTieEpsilon = 0.0001f;
         private const string SpeedParameter = "Speed";
         private const string ActionParameter = "ActionID";
 
@@ -90,6 +92,7 @@ namespace VNPC
         private float waitUntil;
         private float nextPlayerScan;
         private float dialogueRequestStarted;
+        private float lastMoveTime = -1f;
         private float smoothedSpeed;
         private bool waiting;
         private bool playerBlocked;
@@ -97,8 +100,11 @@ namespace VNPC
         private bool dialogueRequestPending;
         private bool dialogueActive;
         private bool communicationWasLocked;
+        private bool hasLastMoveDirection;
+        private bool ownershipRebuildPending;
         private Vector3 areaOrigin;
         private Vector3 destination;
+        private Vector3 lastMoveDirection;
         private Vector3 previousPosition;
 
         private void Start()
@@ -207,6 +213,11 @@ namespace VNPC
         private void UpdateMovement()
         {
             bool communicationLocked = manager != null && manager.IsCharacterCommunicating(characterId);
+            if (ownershipRebuildPending)
+            {
+                if (communicationLocked) return;
+                RebuildMoveStateFromTransform();
+            }
             if (moveStyle == VNPCMoveStyle.None || communicationLocked || playerBlocked) return;
             if (waiting)
             {
@@ -269,6 +280,253 @@ namespace VNPC
                 RecalculateLinkageDestination(advance);
             }
             else hasDestination = false;
+        }
+
+        private void RebuildMoveStateFromTransform()
+        {
+            destination = transform.position;
+            hasDestination = false;
+            waiting = false;
+            waitUntil = 0f;
+            followPlayerId = -1;
+
+            if (moveStyle == VNPCMoveStyle.PathLoop) RebuildPathLoopState();
+            else if (moveStyle == VNPCMoveStyle.PointArea) RebuildPointAreaState();
+            else if (moveStyle == VNPCMoveStyle.PlayerFollow) ScanPlayers();
+            else if (moveStyle == VNPCMoveStyle.LinkageArea) RebuildLinkageAreaState();
+
+            ownershipRebuildPending = false;
+        }
+
+        private void RebuildPathLoopState()
+        {
+            int count = manager == null ? 0 : manager.GetPathPointCount(pathId);
+            if (count <= 0) return;
+
+            int effectiveStep = step == 0 ? 1 : step;
+            int first = NormalizeIndex(startIndex, count);
+            if (count == 1)
+            {
+                pointIndex = first;
+                Vector3 onlyPoint = manager.GetPathPoint(pathId, first);
+                if (Vector3.Distance(transform.position, onlyPoint) <= Mathf.Max(0f, arrivalDistance)) BeginRebuiltWait();
+                else { destination = onlyPoint; hasDestination = true; }
+                return;
+            }
+
+            int nearestPoint = -1;
+            float nearestPointDistance = float.MaxValue;
+            int current = first;
+            for (int order = 0; order < count; order++)
+            {
+                Vector3 point = manager.GetPathPoint(pathId, current);
+                float distance = Vector3.Distance(transform.position, point);
+                if (distance < nearestPointDistance)
+                {
+                    nearestPointDistance = distance;
+                    nearestPoint = current;
+                }
+                int next = NormalizeIndex(current + effectiveStep, count);
+                if (next == first) break;
+                current = next;
+            }
+            if (nearestPoint >= 0 && nearestPointDistance <= Mathf.Max(0f, arrivalDistance))
+            {
+                pointIndex = nearestPoint;
+                BeginRebuiltWait();
+                return;
+            }
+
+            float bestDistance = float.MaxValue;
+            float bestAlignment = -2f;
+            int bestTarget = first;
+            current = first;
+            for (int order = 0; order < count; order++)
+            {
+                int next = NormalizeIndex(current + effectiveStep, count);
+                Vector3 from = manager.GetPathPoint(pathId, current);
+                Vector3 to = manager.GetPathPoint(pathId, next);
+                float distance = DistanceToSegment(transform.position, from, to);
+                float alignment = RouteAlignment(from, to);
+                if (IsBetterRoute(distance, alignment, bestDistance, bestAlignment))
+                {
+                    bestDistance = distance;
+                    bestAlignment = alignment;
+                    bestTarget = next;
+                }
+                current = next;
+                if (current == first) break;
+            }
+            pointIndex = bestTarget;
+            destination = manager.GetPathPoint(pathId, pointIndex);
+            hasDestination = true;
+        }
+
+        private void RebuildPointAreaState()
+        {
+            int count = Mathf.Max(1, areaDirectionCount);
+            int effectiveStep = step == 0 ? 1 : step;
+            Vector3 center = areaCenter != null ? areaCenter.position : areaOrigin;
+            if (count == 1)
+            {
+                areaIndex = 0;
+                Vector3 onlyPoint = GetPointAreaCandidate(center, 0, count);
+                if (Vector3.Distance(transform.position, onlyPoint) <= Mathf.Max(0f, arrivalDistance)) BeginRebuiltWait();
+                else { destination = onlyPoint; hasDestination = true; }
+                return;
+            }
+
+            int nearestPoint = -1;
+            float nearestPointDistance = float.MaxValue;
+            int current = 0;
+            for (int order = 0; order < count; order++)
+            {
+                Vector3 point = GetPointAreaCandidate(center, current, count);
+                float distance = Vector3.Distance(transform.position, point);
+                if (distance < nearestPointDistance)
+                {
+                    nearestPointDistance = distance;
+                    nearestPoint = current;
+                }
+                int next = NormalizeIndex(current + effectiveStep, count);
+                if (next == 0) break;
+                current = next;
+            }
+            if (nearestPoint >= 0 && nearestPointDistance <= Mathf.Max(0f, arrivalDistance))
+            {
+                areaIndex = nearestPoint;
+                BeginRebuiltWait();
+                return;
+            }
+
+            float bestDistance = float.MaxValue;
+            float bestAlignment = -2f;
+            int bestTarget = 0;
+            current = 0;
+            for (int order = 0; order < count; order++)
+            {
+                int next = NormalizeIndex(current + effectiveStep, count);
+                Vector3 from = GetPointAreaCandidate(center, current, count);
+                Vector3 to = GetPointAreaCandidate(center, next, count);
+                float distance = DistanceToSegment(transform.position, from, to);
+                float alignment = RouteAlignment(from, to);
+                if (IsBetterRoute(distance, alignment, bestDistance, bestAlignment))
+                {
+                    bestDistance = distance;
+                    bestAlignment = alignment;
+                    bestTarget = next;
+                }
+                current = next;
+                if (current == 0) break;
+            }
+            areaIndex = bestTarget;
+            destination = GetPointAreaCandidate(center, areaIndex, count);
+            hasDestination = true;
+        }
+
+        private void RebuildLinkageAreaState()
+        {
+            int vertexCount = linkageArea == null ? 0 : linkageArea.childCount;
+            if (vertexCount < 3 || !IsValidLinkagePolygon()) { DeferLinkageRetry(); return; }
+            if (!IsInsideLinkageAreaUnchecked(transform.position))
+            {
+                RecalculateLinkageDestination(false);
+                return;
+            }
+
+            Vector3 min = linkageArea.GetChild(0).position;
+            Vector3 max = min;
+            float height = 0f;
+            for (int i = 0; i < vertexCount; i++)
+            {
+                Vector3 point = linkageArea.GetChild(i).position;
+                min.x = Mathf.Min(min.x, point.x); min.z = Mathf.Min(min.z, point.z);
+                max.x = Mathf.Max(max.x, point.x); max.z = Mathf.Max(max.z, point.z);
+                height += point.y;
+            }
+            height /= vertexCount;
+
+            int candidates = Mathf.Clamp(linkageCandidateCount, 3, 64);
+            bool found = false;
+            float bestAlignment = -2f;
+            int bestIndex = 0;
+            Vector3 bestCandidate = transform.position;
+            for (int wanted = 0; wanted < candidates; wanted++)
+            {
+                int sequenceStart = wanted * 16 + 1;
+                for (int offset = 0; offset < 16; offset++)
+                {
+                    int sequence = sequenceStart + offset;
+                    Vector3 candidate = new Vector3(Mathf.Lerp(min.x, max.x, Halton(sequence, 2)), height, Mathf.Lerp(min.z, max.z, Halton(sequence, 3)));
+                    if (!IsInsideLinkageAreaUnchecked(candidate) || !IsLinkageSegmentInside(transform.position, candidate)) continue;
+                    float alignment = RouteAlignment(transform.position, candidate);
+                    if (!found || (HasRecordedMoveDirection() && alignment > bestAlignment + RouteDirectionTieEpsilon))
+                    {
+                        found = true;
+                        bestAlignment = alignment;
+                        bestIndex = wanted;
+                        bestCandidate = candidate;
+                    }
+                    break;
+                }
+            }
+            if (!found) { DeferLinkageRetry(); return; }
+            areaIndex = bestIndex;
+            destination = bestCandidate;
+            hasDestination = true;
+        }
+
+        private void BeginRebuiltWait()
+        {
+            hasDestination = false;
+            waiting = true;
+            waitUntil = Time.time + Mathf.Max(0f, waitTime);
+        }
+
+        private Vector3 GetPointAreaCandidate(Vector3 center, int index, int count)
+        {
+            float angle = NormalizeIndex(index, count) * 360f / count * Mathf.Deg2Rad;
+            return center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * areaRadius;
+        }
+
+        private int NormalizeIndex(int index, int count)
+        {
+            if (count <= 0) return 0;
+            int normalized = index % count;
+            return normalized < 0 ? normalized + count : normalized;
+        }
+
+        private float DistanceToSegment(Vector3 point, Vector3 start, Vector3 end)
+        {
+            Vector3 edge = end - start;
+            float lengthSquared = edge.sqrMagnitude;
+            if (lengthSquared <= 0.000001f) return Vector3.Distance(point, start);
+            float amount = Mathf.Clamp01(Vector3.Dot(point - start, edge) / lengthSquared);
+            return Vector3.Distance(point, start + edge * amount);
+        }
+
+        private float RouteAlignment(Vector3 from, Vector3 to)
+        {
+            Vector3 route = to - from;
+            route.y = 0f;
+            if (route.sqrMagnitude <= 0.000001f) return -1f;
+            route = route.normalized;
+            Vector3 reference = HasRecordedMoveDirection() ? lastMoveDirection : transform.forward;
+            reference.y = 0f;
+            if (reference.sqrMagnitude <= 0.000001f) return 0f;
+            reference = reference.normalized;
+            return Vector3.Dot(reference, route);
+        }
+
+        private bool IsBetterRoute(float distance, float alignment, float bestDistance, float bestAlignment)
+        {
+            if (distance < bestDistance - RouteDistanceTieEpsilon) return true;
+            return Mathf.Abs(distance - bestDistance) <= RouteDistanceTieEpsilon && alignment > bestAlignment + RouteDirectionTieEpsilon;
+        }
+
+        private bool HasRecordedMoveDirection()
+        {
+            return hasLastMoveDirection && lastMoveTime >= 0f;
         }
 
         private void RecalculateLinkageDestination(bool advance)
@@ -458,9 +716,21 @@ namespace VNPC
         private void UpdateMeasuredSpeed()
         {
             float delta = Mathf.Max(Time.deltaTime, 0.0001f);
-            float measured = Vector3.Distance(transform.position, previousPosition) / delta;
-            previousPosition = transform.position;
+            Vector3 currentPosition = transform.position;
+            Vector3 movement = currentPosition - previousPosition;
+            float measured = movement.magnitude / delta;
+            previousPosition = currentPosition;
             if (measured > Mathf.Max(20f, moveSpeed * 8f)) measured = smoothedSpeed;
+            else
+            {
+                movement.y = 0f;
+                if (measured >= Mathf.Max(0.01f, idleExitSpeed) && movement.sqrMagnitude > 0.000001f)
+                {
+                    lastMoveDirection = movement.normalized;
+                    lastMoveTime = Time.time;
+                    hasLastMoveDirection = true;
+                }
+            }
             smoothedSpeed = Mathf.Lerp(smoothedSpeed, measured, Mathf.Clamp01(speedSmoothing * delta));
             if (animator != null) animator.SetFloat(SpeedParameter, smoothedSpeed);
         }
@@ -577,7 +847,11 @@ namespace VNPC
         {
             if (manager == null) return;
             bool locked = manager.IsCharacterCommunicating(characterId);
-            if (communicationWasLocked && !locked && IsController()) RecalculateAfterCommunication();
+            if (communicationWasLocked && !locked && IsController())
+            {
+                if (ownershipRebuildPending) RebuildMoveStateFromTransform();
+                else RecalculateAfterCommunication();
+            }
             communicationWasLocked = locked;
             if (localPlayer != null && dialogueActive && manager.GetCommunicatingPlayerId(characterId) != localPlayer.playerId) CloseDialogueLocal();
         }
@@ -588,7 +862,15 @@ namespace VNPC
         {
             previousPosition = transform.position;
             smoothedSpeed = 0f;
-            if (IsController()) RecalculateDestination(false);
+            if (!IsController()) return;
+
+            destination = transform.position;
+            hasDestination = false;
+            waiting = false;
+            waitUntil = 0f;
+            followPlayerId = -1;
+            ownershipRebuildPending = manager != null && manager.IsCharacterCommunicating(characterId);
+            if (!ownershipRebuildPending) RebuildMoveStateFromTransform();
         }
     }
 }
