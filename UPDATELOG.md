@@ -1,5 +1,23 @@
 # VNPC Update Log
 
+## v0.1.7
+
+### Character Ownership Transfer
+
+- CharacterのOwnership移行時に、VRCObjectSyncが反映した現在TransformからMoveStateを再構築する処理を追加しました。
+- Remote側でもAnimation速度測定に使用するTransform差分から、最後に正常と判定した水平移動方向を保持するようにしました。
+- VRCObjectSyncの大きな補正に相当する異常なTransform差分は、再構築時の進行方向判定に使用しません。
+- Ownership取得時に古い`destination`、Point／Area Index、待機状態およびPlayerFollow対象を破棄し、再構築完了前の移動を防止します。
+- PathLoopは現在位置に最も近い有向Path区間を検索し、移動方向、Character前方向、巡回順の順で同順位候補を解決して巡回を継続します。
+- PointAreaは固定候補点と有向区間を再生成し、現在位置から次の候補を決定します。
+- PlayerFollowは過去の対象を破棄し、Ownership取得後に通常の候補選択規則で即時再探索します。
+- LinkageAreaは領域外では最寄り頂点へ復帰し、領域内では移動方向に近く経路全体が領域内となるHalton候補を決定論的に再選択します。
+- WaypointまたはPointArea候補への到着位置でOwnershipが移行した場合は、移行時点から`waitTime`を再開始します。
+- 会話中にOwnershipが移行した場合は移動再構築を保留し、会話ロック解除時の現在Transformから再構築します。
+- Player近接停止中はMoveStateだけを再構築し、Playerが`stopDistance`外へ出るまでTransform操作を再開しません。
+- Transform、目的地およびMoveStateを新しいSynced Variableとして追加せず、従来どおりCharacter Transform同期をVRCObjectSyncへ委譲します。
+- 実行時の`ChangeMoveStyle`はTransformだけから復元できないため、Ownership移行をまたぐ状態共有は引き続き対象外です。
+
 ## v0.1.6
 
 ### Shared Dialogue UI Generator
